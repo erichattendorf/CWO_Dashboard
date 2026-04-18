@@ -61,7 +61,7 @@ def parse_nws_properties(props):
     vis_m = props.get('visibility', {}).get('value')
     vis_sm = round(vis_m / 1609.34, 1) if vis_m is not None else "M"
     
-    # --- NEW CLOUD LAYER PARSING ---
+    # --- FIXED CLOUD LAYER PARSING ---
     clouds_str = ""
     cloud_layers = props.get('cloudLayers') or []
     if cloud_layers:
@@ -71,8 +71,8 @@ def parse_nws_properties(props):
             base_dict = layer.get('base')
             base_m = base_dict.get('value') if isinstance(base_dict, dict) else None
             
-            if base_m is not None:
-                # Convert meters to feet, then divide by 100 for standard METAR format
+            # If it says CLR or SKC, do not attach the ASOS laser limit height!
+            if base_m is not None and amt not in ["CLR", "SKC"]:
                 base_ft = base_m * 3.28084
                 base_hnds = int(round(base_ft / 100))
                 layer_strs.append(f"{amt}{base_hnds:03d}")
