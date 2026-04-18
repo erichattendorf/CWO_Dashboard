@@ -3,9 +3,9 @@ import streamlit.components.v1 as components
 import requests
 import re
 from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo # Built-in Python tool! No requirements.txt update needed.
+from zoneinfo import ZoneInfo
 import os
-import fitz  # PyMuPDF for high-res PDF rendering
+import fitz  
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -55,7 +55,6 @@ elif 14 <= hour < 22:
     shift_date = now_ct.strftime("%Y-%m-%d")
 else:
     shift_name = "2200 - 0600 (Night)"
-    # If it's past midnight but before 6am, it belongs to yesterday's night shift cycle
     shift_date = (now_ct - timedelta(days=1)).strftime("%Y-%m-%d") if hour < 6 else now_ct.strftime("%Y-%m-%d")
 
 current_shift_id = f"{shift_date}_{shift_name}"
@@ -65,7 +64,6 @@ with st.sidebar:
     st.title("📋 Shift Duties")
     st.caption(f"Current Shift: **{shift_name}**")
     
-    # Auto-Resetting Checklist
     checklist_items = [
         "Sign-on OID",
         "Sign-in Contractor & FAA Logs",
@@ -80,7 +78,6 @@ with st.sidebar:
     ]
     
     for item in checklist_items:
-        # The key ties the checkbox to the specific shift. If the shift changes, it resets!
         st.checkbox(item, key=f"chk_{current_shift_id}_{item}")
         
     st.divider()
@@ -88,7 +85,6 @@ with st.sidebar:
     st.title("⏰ METAR Alerts")
     st.markdown("Audio/Visual warnings before the XX:53 observation.")
     
-    # DEFAULTED TO OFF!
     alarm_enabled = st.toggle("Enable Alerts", value=False)
     
     if alarm_enabled:
@@ -105,23 +101,20 @@ with st.sidebar:
         sound_id = int(alarm_sound.split(".")[0])
         
         col_v1, col_v2 = st.columns(2)
-        with col_v1:
-            alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
-        with col_v2:
-            alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
+        with col_v1: alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
+        with col_v2: alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # Cleaned up JavaScript to auto-expand the sidebar WITHOUT full screen pop-ups
         alarm_html = f"""
-        <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
+        <div id="idle-box" style="text-align:center; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
             <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
             <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
         </div>
 
-        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
+        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px;">
             <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
             <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
-            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
+            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
                 🔕 Silence Current Alarm
             </button>
         </div>
@@ -216,13 +209,14 @@ with st.sidebar:
             
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
+            
             document.getElementById('alert-box').style.display = 'none';
             document.getElementById('idle-box').style.display = 'block';
+            
             isSilencedForThisMinute = true;
         }};
 
         function triggerAlarmUI(isTest = false) {{
-            // Attempt to force Streamlit Sidebar open
             try {{
                 const parent = window.parent.document;
                 const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
@@ -265,6 +259,8 @@ with st.sidebar:
         </script>
         """
         components.html(alarm_html, height=180)
+    else:
+        st.info("🔕 Alerts Disabled.")
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -389,6 +385,15 @@ def get_awc_data():
         return None
     except: return None
 
+def get_taf_data():
+    try:
+        url = "https://aviationweather.gov/api/data/taf?ids=KBHM&format=json"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200 and len(response.json()) > 0:
+            return response.json()[0].get('rawTAF', 'TAF currently unavailable.')
+        return "TAF currently unavailable."
+    except: return "Error fetching TAF."
+
 def extract_vis_and_cig(metar_string):
     vis_val, cig_val = 10.0, 10000 
     if "Error" in metar_string or "No recent" in metar_string or not metar_string: return vis_val, cig_val
@@ -454,6 +459,11 @@ with top_col1:
                 elif i == 1: st.warning(f"`{metar}`")
                 else: st.info(f"`{metar}`")
         else: st.warning("Could not load AWC METARs.")
+        
+        st.markdown("---")
+        st.markdown("#### ✈️ KBHM Current TAF")
+        taf_string = get_taf_data()
+        st.info(f"`{taf_string}`")
 
     with tab_regional:
         st.markdown("**Last Hour of 5-Minute ASOS Data**")
@@ -508,6 +518,7 @@ with calc_tab:
 
     with calc_col4:
         st.markdown("**⚡ Flash-to-Bang (Lightning)**")
+        st.caption("Distance Rules: **0-5m** = OHD | **5-10m** = VC | **10-30m** = DSNT")
         sec_delay = st.number_input("Seconds between Flash and Thunder:", min_value=0, value=0, step=1)
         if sec_delay > 0:
             miles = round(sec_delay / 5.0, 1)
@@ -531,7 +542,7 @@ st.divider()
 
 # --- BOTTOM UI: REMARKS (RMK) BUILDER ---
 st.subheader("📝 Remarks (RMK) Builder (A-Z Strict Order)")
-tab_svr, tab_wind, tab_ts, tab_precip = st.tabs(["🌪️ Severe Wx", "💨 Wind/Pressure", "🌩️ TS & Lightning", "🌧️ Precip/Hail/Virga"])
+tab_svr, tab_wind, tab_ts, tab_precip = st.tabs(["🌪️ Severe Wx", "💨 Wind/Pressure", "🌩️ TS & Lightning", "🌧️ Precip/Vis/Hail"])
 rmks = {letter: "" for letter in "ABCDEFGHIJKLMNOPQRSTUVW"}
 
 with tab_svr:
@@ -584,22 +595,38 @@ with tab_ts:
             rmks['K'] = f"TS {ts_loc}" + (f" MOV {ts_mov}" if ts_mov != "Unknown" else "")
 
 with tab_precip:
-    col_p1, col_p2, col_p3 = st.columns(3)
+    col_p1, col_p2, col_p3, col_p4 = st.columns(4)
     with col_p1:
-        has_precip = st.checkbox("Precipitation Begin/End")
+        st.markdown("**🌧️ Precipitation**")
+        has_precip = st.checkbox("Precip Begin/End")
         if has_precip:
             p_type, p_b, p_e = st.selectbox("Precip Type:", ["RA", "SN", "DZ", "UP"]), st.text_input("B (Min past HR):", ""), st.text_input("E (Min past HR):", "")
             rmks['I'] = f"{p_type}" + (f"B{p_b}" if p_b else "") + (f"E{p_e}" if p_e else "")
     with col_p2:
-        has_hail = st.checkbox("Hail")
+        st.markdown("**🧊 Hail**")
+        has_hail = st.checkbox("Hail (GR/GS)")
         if has_hail:
-            st.error("🚨 MAIN OBS REMINDER: `GR` (>=1/4 in) or `GS` (<1/4 in).")
+            st.error("🚨 REMINDER: `GR` (>=1/4 in) or `GS` (<1/4 in).")
             rmks['L'] = f"GR {st.text_input('Hail Size:', '1/4')}"
     with col_p3:
+        st.markdown("**🌫️ Virga**")
         has_virga = st.checkbox("VIRGA")
         if has_virga:
             virga_loc = st.selectbox("Virga Loc:", ["ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
             rmks['M'] = "VIRGA ALQDS" if virga_loc == "ALQDS" else f"VIRGA {virga_loc}"
+    with col_p4:
+        st.markdown("**👁️ Visibility Remarks**")
+        has_sector_vis = st.checkbox("Sector Vis (RMK G)")
+        if has_sector_vis:
+            sec_dir = st.selectbox("Sector:", ["N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            sec_vis = st.text_input("Vis (e.g. 1 1/2):", "1")
+            rmks['G'] = f"VIS {sec_dir} {sec_vis}"
+        
+        has_vrb_vis = st.checkbox("Variable Vis (RMK F)")
+        if has_vrb_vis:
+            vrb_min = st.text_input("Min Vis:", "1/2")
+            vrb_max = st.text_input("Max Vis:", "2")
+            rmks['F'] = f"VIS {vrb_min}V{vrb_max}"
 
 st.markdown("---")
 final_remarks = [rmks[key] for key in sorted(rmks.keys()) if rmks[key] != ""]
