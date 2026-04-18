@@ -4,10 +4,14 @@ import requests
 import re
 from datetime import datetime, timezone
 import os
-import fitz  # This is PyMuPDF (The new high-res PDF image engine)
+import fitz  # PyMuPDF for high-res PDF rendering
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
+
+# --- INITIALIZE SESSION STATE FOR PDF VIEWER ---
+if "pdf_page" not in st.session_state:
+    st.session_state.pdf_page = 0
 
 # --- SIDEBAR: METAR ALARM ---
 with st.sidebar:
@@ -35,15 +39,30 @@ with st.sidebar:
         with col_v2:
             alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # THE JAILBREAK JAVASCRIPT
-        # This script creates an overlay on the PARENT browser window so it forces its way onto the screen even if the sidebar is closed!
+        # JavaScript to Auto-Expand the Sidebar and Sound the Alarm
         alarm_html = f"""
+        <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
+            <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
+            <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Sound</button>
+            <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
+        </div>
+
+        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
+            <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
+            <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
+            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
+                🔕 Silence Current Alarm
+            </button>
+        </div>
+
         <script>
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         let audioCtx;
         let activeOscillators = [];
         let alarmInterval;
         let isSilencedForThisMinute = false;
+        const originalTitle = "BHM CWO Dashboard";
+        let titleFlashInterval;
 
         function playTone(freq, type, startDelay, duration, vol) {{
             const pitchMult = {alarm_pitch} / 100.0;
@@ -74,7 +93,7 @@ with st.sidebar:
             activeOscillators = [];
 
             const rawVol = {alarm_vol} / 100.0;
-            const v = Math.pow(rawVol, 2); // Exponential volume for true quietness
+            const v = Math.pow(rawVol, 2);
             const s = {sound_id};
 
             if (s === 1) {{ 
@@ -119,50 +138,40 @@ with st.sidebar:
             else if (s === 15) {{ playTone(100, 'sawtooth', 0, 2.0, v); playTone(102, 'square', 0, 2.0, v*0.5); }}
         }}
 
-        // CREATE FULL SCREEN OVERLAY ON THE PARENT WINDOW
-        const parentDoc = window.parent.document;
-        let overlay = parentDoc.getElementById("metar-alarm-overlay");
-        if (!overlay) {{
-            overlay = parentDoc.createElement("div");
-            overlay.id = "metar-alarm-overlay";
-            overlay.style.position = "fixed";
-            overlay.style.top = "0";
-            overlay.style.left = "0";
-            overlay.style.width = "100vw";
-            overlay.style.height = "100vh";
-            overlay.style.backgroundColor = "rgba(220, 20, 60, 0.95)";
-            overlay.style.zIndex = "9999999";
-            overlay.style.display = "none";
-            overlay.style.flexDirection = "column";
-            overlay.style.justifyContent = "center";
-            overlay.style.alignItems = "center";
-            
-            overlay.innerHTML = `
-                <h1 style="color: white; font-size: 5rem; font-family: sans-serif; margin: 0; text-shadow: 2px 2px 10px rgba(0,0,0,0.5);">🚨 METAR DUE 🚨</h1>
-                <h2 style="color: white; font-size: 2rem; font-family: sans-serif; margin-top: 10px;">Time to check conditions!</h2>
-                <button id="metar-silence-btn" style="margin-top: 40px; padding: 20px 40px; font-size: 2rem; font-weight: bold; cursor: pointer; border-radius: 10px; border: none; background: white; color: #cc0000; box-shadow: 0px 5px 15px rgba(0,0,0,0.5);">
-                    🔕 Silence Alarm
-                </button>
-            `;
-            parentDoc.body.appendChild(overlay);
-
-            parentDoc.getElementById("metar-silence-btn").onclick = function() {{
-                clearInterval(alarmInterval);
-                activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
-                activeOscillators = [];
-                overlay.style.display = "none";
-                isSilencedForThisMinute = true;
-            }};
-        }}
-
         function triggerAlarmUI(isTest = false) {{
-            overlay.style.display = "flex";
+            // Automatically open the sidebar if it is closed!
+            try {{
+                const expandBtn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
+                if (expandBtn) {{ expandBtn.click(); }}
+            }} catch(e) {{}}
+
+            document.getElementById('idle-box').style.display = 'none';
+            document.getElementById('alert-box').style.display = 'block';
             playAlarmAudio();
-            if (!isTest) {{ alarmInterval = setInterval(playAlarmAudio, 5000); }}
+            
+            if (!isTest) {{ 
+                alarmInterval = setInterval(playAlarmAudio, 5000); 
+                try {{
+                    let flashState = false;
+                    titleFlashInterval = setInterval(() => {{
+                        window.parent.document.title = flashState ? "🚨 ALARM 🚨" : "OBSERVATION DUE!";
+                        flashState = !flashState;
+                    }}, 1000);
+                }} catch(e) {{}}
+            }}
         }}
 
-        // EXPOSE TEST FUNCTION TO THE BUTTON BELOW
-        window.testMetarAlarm = function() {{ triggerAlarmUI(true); }};
+        function silenceAlarm() {{
+            clearInterval(alarmInterval);
+            clearInterval(titleFlashInterval);
+            try {{ window.parent.document.title = originalTitle; }} catch(e) {{}}
+            
+            activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
+            activeOscillators = [];
+            document.getElementById('alert-box').style.display = 'none';
+            document.getElementById('idle-box').style.display = 'block';
+            isSilencedForThisMinute = true;
+        }}
 
         let hasTriggeredThisHour = false;
         setInterval(function() {{
@@ -175,19 +184,13 @@ with st.sidebar:
             }} else {{
                 hasTriggeredThisHour = false; 
                 isSilencedForThisMinute = false;
-                overlay.style.display = "none";
+                document.getElementById('alert-box').style.display = 'none';
+                document.getElementById('idle-box').style.display = 'block';
             }}
         }}, 1000);
         </script>
-        
-        <div style="text-align:center; padding-top: 10px;">
-            <button onclick="window.testMetarAlarm()" style="padding: 10px 15px; font-weight: bold; color: white; background-color: #ff4b4b; border: none; border-radius: 5px; cursor: pointer;">
-                🔊 Test Full-Screen Alarm
-            </button>
-            <p style="font-size: 11px; color: gray; margin-top: 5px;">(Click once to authorize audio)</p>
-        </div>
         """
-        components.html(alarm_html, height=120)
+        components.html(alarm_html, height=220)
     else:
         st.info("🔕 Alarm is currently disabled.")
 
@@ -515,21 +518,20 @@ if final_remarks:
 
 st.divider()
 
-# --- PDF SEARCH ENGINE WITH HIGH-RES IMAGE RENDERER ---
+# --- PDF SEARCH ENGINE WITH CUSTOM IMAGE PAGINATOR ---
 st.subheader("📚 JO 7900.5E Reference Manual")
-st.markdown("Search the official FAA Surface Weather Observing manual instantly. Pages are rendered as high-res images to bypass browser blocking.")
+st.markdown("Search the official FAA Surface Weather Observing manual instantly. Pages are rendered securely as images.")
 
 if os.path.exists("Order_JO_7900.5E.pdf"):
     search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
+    
     if search_query:
         with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
             try:
-                # Open PDF using PyMuPDF (fitz)
                 doc = fitz.open("Order_JO_7900.5E.pdf")
                 results = []
                 for i in range(len(doc)):
-                    page = doc.load_page(i)
-                    text = page.get_text()
+                    text = doc[i].get_text()
                     if search_query.lower() in text.lower():
                         idx = text.lower().find(search_query.lower())
                         start = max(0, idx - 40)
@@ -539,28 +541,53 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                 if results:
                     st.success(f"✅ Found {len(results)} matching pages!")
                     match_dict = {f"Page {p+1} ( ...{snip}... )": p for p, snip in results}
-                    selected_match = st.selectbox("Select a match to view the document:", list(match_dict.keys()))
                     
-                    if selected_match:
-                        # Extract the exact target page as a High-Res Image (Bypasses Chrome Block!)
-                        target_page_idx = match_dict[selected_match]
+                    # Layout for selecting a match
+                    selected_match = st.selectbox("Select a match to start reading from:", list(match_dict.keys()))
+                    
+                    if st.button("Load This Page"):
+                        # Save the target page to session state so we can scroll from there!
+                        st.session_state.pdf_page = match_dict[selected_match]
                         
-                        st.markdown("---")
-                        
-                        # Render the main target page
-                        page = doc.load_page(target_page_idx)
-                        pix = page.get_pixmap(dpi=150) # High Resolution
-                        st.image(pix.tobytes("png"), caption=f"Page {target_page_idx + 1}", use_container_width=True)
-                        
-                        # Automatically render the NEXT page too just in case the section continues
-                        if target_page_idx + 1 < len(doc):
-                            st.markdown("---")
-                            next_page = doc.load_page(target_page_idx + 1)
-                            next_pix = next_page.get_pixmap(dpi=150)
-                            st.image(next_pix.tobytes("png"), caption=f"Page {target_page_idx + 2}", use_container_width=True)
                 else: 
                     st.warning("No results found.")
             except Exception as e: 
                 st.error(f"Error reading PDF. Are you sure you updated requirements.txt? ({e})")
+
+    # Render the Interactive Image Viewer
+    if "pdf_page" in st.session_state and st.session_state.pdf_page >= 0:
+        try:
+            doc = fitz.open("Order_JO_7900.5E.pdf")
+            total_pages = len(doc)
+            
+            # Boundary protections
+            if st.session_state.pdf_page < 0:
+                st.session_state.pdf_page = 0
+            elif st.session_state.pdf_page >= total_pages:
+                st.session_state.pdf_page = total_pages - 1
+            
+            st.markdown("---")
+            
+            # The Paginator Controls
+            col_p1, col_p2, col_p3 = st.columns([1, 2, 1])
+            with col_p1:
+                if st.button("⬅️ Previous Page") and st.session_state.pdf_page > 0:
+                    st.session_state.pdf_page -= 1
+                    st.rerun()
+            with col_p2:
+                st.markdown(f"<div style='text-align: center; font-weight: bold;'>Currently Viewing Page {st.session_state.pdf_page + 1} of {total_pages}</div>", unsafe_allow_html=True)
+            with col_p3:
+                if st.button("Next Page ➡️") and st.session_state.pdf_page < total_pages - 1:
+                    st.session_state.pdf_page += 1
+                    st.rerun()
+
+            # Render the specific page as a crisp image
+            page = doc.load_page(st.session_state.pdf_page)
+            pix = page.get_pixmap(dpi=150)
+            st.image(pix.tobytes("png"), use_container_width=True)
+            
+        except Exception as e:
+            st.error("Error loading document view.")
+            
 else: 
     st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
