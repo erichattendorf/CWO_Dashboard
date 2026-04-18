@@ -19,13 +19,13 @@ with header_col2:
     logo1, logo2 = st.columns(2)
     with logo1:
         # Note: If your file on GitHub is NOAA.png, change the name below!
-        if os.path.exists("noaa.png"):
+        if os.path.exists("NOAA.png"):
             st.image("noaa.png", width=75)
         else:
             st.caption("[NOAA Logo Missing]")
     with logo2:
         # Note: If your file on GitHub is NWS.png, change the name below!
-        if os.path.exists("nws.png"):
+        if os.path.exists("NWS.png"):
             st.image("nws.png", width=75)
         else:
             st.caption("[NWS Logo Missing]")
