@@ -8,111 +8,7 @@ import PyPDF2
 import base64
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
-
-# --- SIDEBAR: METAR ALARM ---
-with st.sidebar:
-    st.title("⏰ METAR Alarm")
-    st.markdown("Set a time to get an audio/visual alert before the XX:53 observation.")
-    
-    # The new Kill Switch!
-    alarm_enabled = st.toggle("Enable Alarm", value=True)
-    
-    if alarm_enabled:
-        alarm_minute = st.number_input("Alert me at XX past the hour:", min_value=0, max_value=59, value=48, step=1)
-        
-        # JavaScript injected to run the clock and sound the SOS alarm in the background
-        alarm_html = f"""
-        <div id="alarm-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 10px; margin-top: 10px; transition: 0.3s;">
-            <h3 id="alarm-text" style="color: grey; margin: 0; font-size: 16px;">Monitoring clock for XX:{alarm_minute:02d}...</h3>
-            <button onclick="playSOS()" style="margin-top:15px; padding: 6px 12px; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; background: #f0f2f6;">🔊 Test SOS Sound</button>
-            <p style="font-size: 11px; color: gray; margin-top: 5px;">(Click 'Test' once to allow your browser to play audio automatically!)</p>
-        </div>
-        <script>
-        // Web Audio API for mathematically precise SOS Morse Code
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        let audioCtx;
-
-        function playBeep(duration, delay) {{
-            if (!audioCtx) audioCtx = new AudioContext();
-            setTimeout(() => {{
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.frequency.value = 700; // 700Hz is a classic, piercing Morse tone
-                osc.type = "sine";
-                
-                gain.gain.setValueAtTime(0, audioCtx.currentTime);
-                gain.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.01);
-                gain.gain.setValueAtTime(1, audioCtx.currentTime + duration - 0.01);
-                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
-                
-                osc.start(audioCtx.currentTime);
-                osc.stop(audioCtx.currentTime + duration);
-            }}, delay * 1000);
-        }}
-
-        function playSOS() {{
-            if (!audioCtx) audioCtx = new AudioContext();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            
-            let t = 0;
-            const dit = 0.1;
-            const dah = 0.3;
-            const p = 0.1; // pause between beeps
-            const lp = 0.3; // letter pause
-
-            function addSOS() {{
-                // S (... )
-                playBeep(dit, t); t += dit + p;
-                playBeep(dit, t); t += dit + p;
-                playBeep(dit, t); t += dit + lp;
-                // O (--- )
-                playBeep(dah, t); t += dah + p;
-                playBeep(dah, t); t += dah + p;
-                playBeep(dah, t); t += dah + lp;
-                // S (... )
-                playBeep(dit, t); t += dit + p;
-                playBeep(dit, t); t += dit + p;
-                playBeep(dit, t); t += dit + 1.0; // 1 second pause before repeating the whole SOS
-            }}
-
-            // Play the SOS pattern 3 times
-            addSOS();
-            addSOS();
-            addSOS();
-        }}
-
-        let alarmPlayed = false;
-
-        setInterval(function() {{
-            var d = new Date();
-            var box = document.getElementById("alarm-box");
-            var txt = document.getElementById("alarm-text");
-            
-            if (d.getMinutes() === {alarm_minute}) {{
-                box.style.backgroundColor = "#ff4b4b";
-                txt.style.color = "white";
-                txt.innerHTML = "🚨 TIME TO GO OUTSIDE! 🚨";
-                
-                if (!alarmPlayed && d.getSeconds() < 10) {{ // Trigger once during the first 10 seconds of the minute
-                    playSOS();
-                    alarmPlayed = true;
-                }}
-            }} 
-            else {{
-                box.style.backgroundColor = "transparent";
-                txt.style.color = "grey";
-                txt.innerHTML = "Monitoring clock for XX:{alarm_minute:02d}...";
-                alarmPlayed = false; // Reset for the next hour
-            }}
-        }}, 1000);
-        </script>
-        """
-        components.html(alarm_html, height=200)
-    else:
-        st.info("🔕 Alarm is currently disabled.")
+st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -136,6 +32,144 @@ with header_col2:
         else:
             st.caption("[NWS Logo]")
 
+# --- ALARM SYSTEM (MOVED TO MAIN PAGE) ---
+with st.expander("⏰ METAR Alarm & Notification Settings", expanded=True):
+    col_al1, col_al2, col_al3, col_al4 = st.columns(4)
+    
+    with col_al1:
+        alarm_enabled = st.toggle("Enable Alarm Alerts", value=True)
+    with col_al2:
+        alarm_minute = st.number_input("Trigger at XX past the hour:", min_value=0, max_value=59, value=48, step=1)
+    with col_al3:
+        sound_choices = [
+            "1. SOS Morse Code", "2. Classic Triple Beep", "3. Two-Tone Warning", 
+            "4. Gentle Chimes", "5. Submarine Ping", "6. Harsh Buzzer", 
+            "7. Digital Watch", "8. Air Raid Siren", "9. Radar Sweep", "10. Urgent Trill"
+        ]
+        alarm_sound = st.selectbox("Select Sound Profile:", sound_choices)
+        sound_id = int(alarm_sound.split(".")[0])
+    with col_al4:
+        alarm_vol = st.slider("Volume Level %", min_value=10, max_value=100, value=100, step=10)
+
+    if alarm_enabled:
+        alarm_html = f"""
+        <div style="text-align: center; margin-top: 10px;">
+            <button onclick="triggerAlarmUI(true)" style="padding: 10px 20px; font-weight: bold; background-color: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
+                🔊 Test Volume & Full-Screen Visuals
+            </button>
+            <p style="font-size: 12px; color: gray; margin-top: 5px;">(Clicking 'Test' authorizes your web browser to play audio automatically)</p>
+        </div>
+
+        <div id="full-screen-alarm" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(220, 20, 60, 0.95); z-index: 999999; flex-direction: column; justify-content: center; align-items: center; text-align: center; backdrop-filter: blur(5px);">
+            <h1 style="color: white; font-size: 6rem; font-family: sans-serif; margin: 0; text-shadow: 3px 3px 15px rgba(0,0,0,0.5);">🚨 TIME TO GO OUTSIDE 🚨</h1>
+            <h2 style="color: white; font-size: 3rem; font-family: sans-serif; margin-top: 10px;">XX:{alarm_minute:02d} METAR Observation Due</h2>
+            <button onclick="stopAlarmUI()" style="margin-top: 50px; padding: 25px 50px; font-size: 2.5rem; font-weight: bold; cursor: pointer; border-radius: 15px; border: none; background: white; color: #cc0000; box-shadow: 0px 10px 30px rgba(0,0,0,0.5); transition: 0.2s;">
+                Acknowledge & Silence
+            </button>
+        </div>
+
+        <script>
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+        let activeOscillators = [];
+        let alarmInterval;
+
+        function playTone(freq, type, startDelay, duration, vol) {{
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            const t = audioCtx.currentTime + startDelay;
+            gain.gain.setValueAtTime(0, t);
+            gain.gain.linearRampToValueAtTime(vol, t + 0.02);
+            gain.gain.setValueAtTime(vol, t + duration - 0.02);
+            gain.gain.linearRampToValueAtTime(0, t + duration);
+            
+            osc.start(t);
+            osc.stop(t + duration);
+            activeOscillators.push(osc);
+        }}
+
+        function playAlarmAudio() {{
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
+            activeOscillators = [];
+
+            const v = {alarm_vol} / 100.0;
+            const s = {sound_id};
+
+            if (s === 1) {{
+                let t = 0;
+                for(let i=0; i<3; i++) {{
+                    playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v);
+                    t += 0.8;
+                    playTone(700, 'sine', t, 0.3, v); playTone(700, 'sine', t+0.4, 0.3, v); playTone(700, 'sine', t+0.8, 0.3, v);
+                    t += 1.3;
+                    playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v);
+                    t += 1.5;
+                }}
+            }} 
+            else if (s === 2) {{ playTone(800, 'sine', 0, 0.15, v); playTone(800, 'sine', 0.3, 0.15, v); playTone(800, 'sine', 0.6, 0.15, v); }}
+            else if (s === 3) {{
+                for(let i=0; i<4; i++) {{ playTone(600, 'square', i*1.0, 0.5, v * 0.5); playTone(800, 'square', (i*1.0)+0.5, 0.5, v * 0.5); }}
+            }}
+            else if (s === 4) {{ playTone(523.25, 'sine', 0, 0.4, v); playTone(659.25, 'sine', 0.3, 0.4, v); playTone(783.99, 'sine', 0.6, 0.8, v); }}
+            else if (s === 5) {{ playTone(1000, 'sine', 0, 0.1, v); playTone(1000, 'sine', 0.1, 1.5, v * 0.1); }}
+            else if (s === 6) {{ playTone(150, 'sawtooth', 0, 0.5, v); playTone(150, 'sawtooth', 0.8, 0.5, v); playTone(150, 'sawtooth', 1.6, 0.5, v); }}
+            else if (s === 7) {{
+                playTone(2000, 'square', 0, 0.08, v*0.2); playTone(2000, 'square', 0.15, 0.08, v*0.2);
+                playTone(2000, 'square', 1.0, 0.08, v*0.2); playTone(2000, 'square', 1.15, 0.08, v*0.2);
+            }}
+            else if (s === 8) {{
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.type = 'sine'; osc.connect(gain); gain.connect(audioCtx.destination);
+                gain.gain.setValueAtTime(0, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(v, audioCtx.currentTime + 0.5);
+                gain.gain.setValueAtTime(v, audioCtx.currentTime + 3.5); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 4.0);
+                osc.frequency.setValueAtTime(400, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(1200, audioCtx.currentTime + 2);
+                osc.frequency.linearRampToValueAtTime(400, audioCtx.currentTime + 4);
+                osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 4.0); activeOscillators.push(osc);
+            }}
+            else if (s === 9) {{ for(let i=0; i<3; i++) {{ playTone(900, 'triangle', i*1.5, 0.1, v); }} }}
+            else if (s === 10) {{ for(let i=0; i<15; i++) {{ playTone(i%2==0 ? 700 : 750, 'square', i*0.1, 0.08, v*0.5); }} }}
+        }}
+
+        function triggerAlarmUI(isTest = false) {{
+            document.getElementById('full-screen-alarm').style.display = 'flex';
+            playAlarmAudio();
+            if (!isTest) {{ alarmInterval = setInterval(playAlarmAudio, 5000); }}
+        }}
+
+        function stopAlarmUI() {{
+            document.getElementById('full-screen-alarm').style.display = 'none';
+            clearInterval(alarmInterval);
+            activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
+            activeOscillators = [];
+        }}
+
+        let hasTriggeredThisHour = false;
+
+        setInterval(function() {{
+            var d = new Date();
+            if (d.getMinutes() === {alarm_minute}) {{
+                if (!hasTriggeredThisHour) {{
+                    triggerAlarmUI(false);
+                    hasTriggeredThisHour = true;
+                }}
+            }} else {{
+                hasTriggeredThisHour = false;
+            }}
+        }}, 1000);
+        </script>
+        """
+        components.html(alarm_html, height=80)
+    else:
+        st.info("🔕 Alarm is currently disabled. No audio or visual alerts will be triggered.")
+
 st.divider()
 
 # --- FUNCTIONS ---
@@ -148,15 +182,13 @@ NWS_HEADERS = {
 def parse_nws_properties(props):
     timestamp = props.get('timestamp')
     if not timestamp: return None, None, None, None
-    
     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
     time_str = dt.strftime("%H:%MZ")
     
     try:
         temp_c = float(props.get('temperature', {}).get('value'))
         dew_c = float(props.get('dewpoint', {}).get('value'))
-    except (TypeError, ValueError):
-        temp_c, dew_c = None, None
+    except (TypeError, ValueError): temp_c, dew_c = None, None
 
     wdir = props.get('windDirection', {}).get('value')
     wspd_kmh = props.get('windSpeed', {}).get('value')
@@ -175,7 +207,6 @@ def parse_nws_properties(props):
             amt = layer.get('amount', '---')
             base_dict = layer.get('base')
             base_m = base_dict.get('value') if isinstance(base_dict, dict) else None
-            
             if base_m is not None and amt not in ["CLR", "SKC"]:
                 base_ft = base_m * 3.28084
                 base_hnds = int(round(base_ft / 100))
@@ -186,14 +217,11 @@ def parse_nws_properties(props):
         
     if not clouds_str:
         desc = props.get('textDescription', '')
-        if desc and "Clear" in desc: 
-            clouds_str = "CLR"
-        else: 
-            clouds_str = "M"
+        if desc and "Clear" in desc: clouds_str = "CLR"
+        else: clouds_str = "M"
             
     temp_str = f"{int(temp_c)}" if temp_c is not None else "M"
     dew_str = f"{int(dew_c)}" if dew_c is not None else "M"
-    
     pres_pa = props.get('barometricPressure', {}).get('value')
     pres_inhg = round(pres_pa / 3386.389, 2) if pres_pa is not None else "M"
     
@@ -204,7 +232,6 @@ def get_5min_asos():
     try:
         url = "https://api.weather.gov/stations/KBHM/observations?limit=10"
         response = requests.get(url, headers=NWS_HEADERS, timeout=5)
-        
         if response.status_code == 200:
             features = response.json().get('features', [])
             if len(features) > 0:
@@ -212,29 +239,20 @@ def get_5min_asos():
                 props = ob['properties']
                 raw = props.get('rawMessage')
                 formatted_str, timestamp, temp_c, dew_c = parse_nws_properties(props)
-                
                 if formatted_str:
-                    if raw:
-                        final_raw = f"BHM 5-MIN ({timestamp[11:16]}Z) | {raw}"
-                    else:
-                        final_raw = f"BHM 5-MIN {formatted_str}"
+                    final_raw = f"BHM 5-MIN ({timestamp[11:16]}Z) | {raw}" if raw else f"BHM 5-MIN {formatted_str}"
                     return final_raw, timestamp, temp_c, dew_c, None
-                    
             return None, None, None, None, "No data features found in NWS ping."
-        else:
-            return None, None, None, None, f"HTTP {response.status_code}"
-    except Exception as e:
-        return None, None, None, None, f"Error: {str(e)}"
+        else: return None, None, None, None, f"HTTP {response.status_code}"
+    except Exception as e: return None, None, None, None, f"Error: {str(e)}"
 
 def get_regional_5min():
     stations = ["KTCL", "KANB", "KEET", "KPLR"]
     data = {}
-    
     for stn in stations:
         try:
             url = f"https://api.weather.gov/stations/{stn}/observations?limit=6"
             res = requests.get(url, headers=NWS_HEADERS, timeout=5)
-            
             if res.status_code == 200:
                 features = res.json().get('features', [])
                 parsed = []
@@ -242,17 +260,11 @@ def get_regional_5min():
                     props = ob['properties']
                     raw = props.get('rawMessage')
                     formatted_str, ts, _, _ = parse_nws_properties(props)
-                    
                     if formatted_str:
-                        if raw:
-                            parsed.append(f"({ts[11:16]}Z) | {raw}")
-                        else:
-                            parsed.append(formatted_str)
+                        parsed.append(f"({ts[11:16]}Z) | {raw}" if raw else formatted_str)
                 data[stn] = parsed
-            else:
-                data[stn] = [f"API Error: HTTP {res.status_code}"]
-        except Exception as e:
-            data[stn] = ["Connection Error"]
+            else: data[stn] = [f"API Error: HTTP {res.status_code}"]
+        except: data[stn] = ["Connection Error"]
     return data
 
 def get_awc_data():
@@ -277,8 +289,7 @@ def extract_vis_and_cig(metar_string):
             elif "/" in vis_str:
                 num, den = vis_str.split("/")
                 vis_val = float(num) / float(den)
-            else:
-                vis_val = float(vis_str)
+            else: vis_val = float(vis_str)
         except: pass 
     cig_match = re.search(r'(BKN|OVC|VV)(\d{3})', metar_string)
     if cig_match: cig_val = int(cig_match.group(2)) * 100
@@ -301,13 +312,12 @@ if latest_raw and latest_ts:
         ob_time = datetime.fromisoformat(latest_ts.replace('Z', '+00:00'))
         now = datetime.now(timezone.utc)
         age_minutes = (now - ob_time).total_seconds() / 60
-
         col_a, col_b = st.columns([2, 1])
         with col_a: st.code(f"{latest_raw}", language="bash")
         with col_b:
             if age_minutes > 20: st.error(f"🚨 **COMM WARNING:** Ping is **{int(age_minutes)} mins old!** Check long-line.")
             else: st.success(f"✅ **Comms Good:** Latency is **{int(age_minutes)}** mins.")
-    except Exception as e: st.warning("Could not calculate age.")
+    except: st.warning("Could not calculate age.")
 else: st.warning(f"⚠️ 5-minute network ping unavailable. Diagnostic code: {diag_err}")
 
 st.divider()
@@ -338,8 +348,7 @@ with top_col1:
                 reg_data = get_regional_5min()
                 for stn, obs_list in reg_data.items():
                     st.markdown(f"**{stn}**")
-                    for ob in obs_list:
-                        st.caption(f"`{ob}`")
+                    for ob in obs_list: st.caption(f"`{ob}`")
 
 with top_col2:
     st.markdown("#### 📡 Live Radar (KBMX)")
@@ -349,7 +358,6 @@ st.divider()
 
 # --- MIDDLE UI: SPECI & CLOUD CALCULATORS ---
 st.subheader("🧮 JO 7900.5E Calculators")
-
 calc_col1, calc_col2, calc_col3 = st.columns(3)
 
 with calc_col1:
@@ -373,10 +381,10 @@ with calc_col2:
 with calc_col3:
     st.markdown("**☁️ Convective Cloud Base**")
     if live_temp_c is not None and live_dew_c is not None:
-        t_f = (live_temp_c * 9/5) + 32
-        d_f = (live_dew_c * 9/5) + 32
+        t_f, d_f = (live_temp_c * 9/5) + 32, (live_dew_c * 9/5) + 32
         spread_f = t_f - d_f
-        ccl_agl = int(spread_f * 230)
+        # Snap the raw calculation to the nearest 100 feet for standard aviation reporting
+        ccl_agl = int(round((spread_f * 230) / 100.0)) * 100
         st.info(f"**Live Spread:** {int(spread_f)}°F")
         st.success(f"**Suggested Base:** {ccl_agl} ft AGL")
     else: st.warning("Awaiting live Temp/Dew data...")
@@ -385,10 +393,7 @@ st.divider()
 
 # --- BOTTOM UI: REMARKS (RMK) BUILDER ---
 st.subheader("📝 Remarks (RMK) Builder (A-Z Strict Order)")
-st.caption("Select weather phenomena. The system will automatically sort them into the exact order required by the BHM Cheat Sheet.")
-
 tab_svr, tab_wind, tab_ts, tab_precip = st.tabs(["🌪️ Severe Wx", "💨 Wind/Pressure", "🌩️ TS & Lightning", "🌧️ Precip/Hail/Virga"])
-
 rmks = {letter: "" for letter in "ABCDEFGHIJKLMNOPQRSTUVW"}
 
 with tab_svr:
@@ -396,20 +401,12 @@ with tab_svr:
     with col_a:
         has_torn = st.checkbox("Tornadic Activity")
         if has_torn:
-            st.error("🚨 MAIN OBS REMINDER: Add `+FC` (Tornado/Waterspout) or `FC` (Funnel Cloud) to Present WX.")
+            st.error("🚨 MAIN OBS REMINDER: Add `+FC` or `FC` to Present WX.")
             torn_type = st.selectbox("Type:", ["TORNADO", "FUNNEL CLOUD", "WATERSPOUT"])
-            torn_b = st.text_input("Begin Time (Min past HR):", "")
-            torn_e = st.text_input("End Time (Min past HR):", "")
-            torn_loc = st.selectbox("Location:", ["", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            torn_mov = st.selectbox("Moving:", ["", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            
-            t_str = f"{torn_type}"
-            if torn_b: t_str += f" B{torn_b}"
-            if torn_e: t_str += f" E{torn_e}"
-            if torn_loc: t_str += f" {torn_loc}"
-            if torn_mov: t_str += f" MOV {torn_mov}"
+            torn_b, torn_e = st.text_input("Begin Time (Min):", ""), st.text_input("End Time (Min):", "")
+            torn_loc, torn_mov = st.selectbox("Location:", ["", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"]), st.selectbox("Moving:", ["", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            t_str = f"{torn_type}" + (f" B{torn_b}" if torn_b else "") + (f" E{torn_e}" if torn_e else "") + (f" {torn_loc}" if torn_loc else "") + (f" MOV {torn_mov}" if torn_mov else "")
             rmks['B'] = t_str
-
     with col_b:
         has_volc = st.checkbox("Volcanic Eruption")
         if has_volc:
@@ -422,18 +419,13 @@ with tab_wind:
     with col_w1:
         has_pk_wnd = st.checkbox("Peak Wind (>25kt)")
         if has_pk_wnd:
-            pk_dir = st.number_input("Direction", min_value=0, max_value=360, step=10, value=270)
-            pk_spd = st.number_input("Speed (Kts)", min_value=26, max_value=200, step=1, value=35)
-            pk_time = st.number_input("Time (Min)", min_value=0, max_value=59, step=1, value=15)
+            pk_dir, pk_spd, pk_time = st.number_input("Direction", min_value=0, max_value=360, step=10, value=270), st.number_input("Speed (Kts)", min_value=26, max_value=200, step=1, value=35), st.number_input("Time (Min)", min_value=0, max_value=59, step=1, value=15)
             rmks['C'] = f"PK WND {pk_dir:03d}{pk_spd}/{pk_time:02d}"
     with col_w2:
         has_wshft = st.checkbox("Wind Shift")
         if has_wshft:
             wshft_time = st.number_input("Shift Time (Min)", min_value=0, max_value=59, step=1, value=15)
-            fropa = st.checkbox("FROPA (Frontal Passage)")
-            w_str = f"WSHFT {wshft_time:02d}"
-            if fropa: w_str += " FROPA"
-            rmks['D'] = w_str
+            rmks['D'] = f"WSHFT {wshft_time:02d}" + (" FROPA" if st.checkbox("FROPA") else "")
     with col_w3:
         pressure_rmk = st.radio("Pressure Trend:", ["None", "Rising Rapidly", "Falling Rapidly"])
         if pressure_rmk == "Rising Rapidly": rmks['R'] = "PRESRR"
@@ -444,77 +436,50 @@ with tab_ts:
     with col_ts1:
         has_ltg = st.checkbox("Lightning Observed")
         if has_ltg:
-            ltg_freq = st.selectbox("Frequency:", ["OCNL", "FRQ", "CONS"])
-            ltg_types = st.multiselect("Type:", ["IC", "CG", "CC", "CA"], default=["CG"])
-            ltg_loc = st.selectbox("LTG Location:", ["ALQDS", "OHD", "VC", "DSNT", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            type_str = "".join(ltg_types)
-            rmks['H'] = f"{ltg_freq} LTG{type_str} {ltg_loc}"
-            
+            ltg_freq, ltg_types, ltg_loc = st.selectbox("Frequency:", ["OCNL", "FRQ", "CONS"]), st.multiselect("Type:", ["IC", "CG", "CC", "CA"], default=["CG"]), st.selectbox("LTG Location:", ["ALQDS", "OHD", "VC", "DSNT", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            rmks['H'] = f"{ltg_freq} LTG{''.join(ltg_types)} {ltg_loc}"
     with col_ts2:
         has_ts = st.checkbox("Thunderstorm Active")
         if has_ts:
             st.warning("🚨 **TS REMINDER:** Put `TS` in Pres WX | Add `CB` to Sky | Turn ALDARS to `MAN`")
-            ts_loc = st.selectbox("TS Location:", ["OHD", "VC", "DSNT", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            ts_mov = st.selectbox("TS Moving:", ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            ts_str = f"TS {ts_loc}"
-            if ts_mov != "Unknown": ts_str += f" MOV {ts_mov}"
-            rmks['K'] = ts_str
+            ts_loc, ts_mov = st.selectbox("TS Location:", ["OHD", "VC", "DSNT", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"]), st.selectbox("TS Moving:", ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            rmks['K'] = f"TS {ts_loc}" + (f" MOV {ts_mov}" if ts_mov != "Unknown" else "")
 
 with tab_precip:
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
         has_precip = st.checkbox("Precipitation Begin/End")
         if has_precip:
-            p_type = st.selectbox("Precip Type:", ["RA", "SN", "DZ", "UP"])
-            p_b = st.text_input("B (Min past HR):", "")
-            p_e = st.text_input("E (Min past HR):", "")
-            p_str = f"{p_type}"
-            if p_b: p_str += f"B{p_b}"
-            if p_e: p_str += f"E{p_e}"
-            rmks['I'] = p_str
+            p_type, p_b, p_e = st.selectbox("Precip Type:", ["RA", "SN", "DZ", "UP"]), st.text_input("B (Min past HR):", ""), st.text_input("E (Min past HR):", "")
+            rmks['I'] = f"{p_type}" + (f"B{p_b}" if p_b else "") + (f"E{p_e}" if p_e else "")
     with col_p2:
         has_hail = st.checkbox("Hail")
         if has_hail:
             st.error("🚨 MAIN OBS REMINDER: `GR` (>=1/4 in) or `GS` (<1/4 in).")
-            hail_size = st.text_input("Hail Size (Inches, e.g., 1/2, 1 1/4):", "1/4")
-            rmks['L'] = f"GR {hail_size}"
+            rmks['L'] = f"GR {st.text_input('Hail Size:', '1/4')}"
     with col_p3:
         has_virga = st.checkbox("VIRGA")
         if has_virga:
             virga_loc = st.selectbox("Virga Loc:", ["ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            if virga_loc == "ALQDS": rmks['M'] = "VIRGA ALQDS"
-            else: rmks['M'] = f"VIRGA {virga_loc}"
+            rmks['M'] = "VIRGA ALQDS" if virga_loc == "ALQDS" else f"VIRGA {virga_loc}"
 
 st.markdown("---")
-
-final_remarks = []
-for key in sorted(rmks.keys()):
-    if rmks[key] != "":
-        final_remarks.append(rmks[key])
-
+final_remarks = [rmks[key] for key in sorted(rmks.keys()) if rmks[key] != ""]
 if final_remarks:
     st.success("**Final JO 7900.5E Remark String (Correct Order):**")
     st.code("RMK " + " ".join(final_remarks), language="markdown")
-else:
-    st.info("Select weather events in the tabs above to build your remarks string.")
 
 st.divider()
 
 # --- PDF SEARCH ENGINE WITH VIEWER ---
 st.subheader("📚 JO 7900.5E Reference Manual")
-st.markdown("Search the official FAA Surface Weather Observing manual instantly, or view it directly.")
-
 if os.path.exists("Order_JO_7900.5E.pdf"):
-    with open("Order_JO_7900.5E.pdf", "rb") as pdf_file:
-        PDFbyte = pdf_file.read()
+    with open("Order_JO_7900.5E.pdf", "rb") as pdf_file: PDFbyte = pdf_file.read()
     base64_pdf = base64.b64encode(PDFbyte).decode('utf-8')
-
     with st.expander("📖 Click Here to Browse the Full JO 7900.5E Manual"):
         st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}#page=1" width="100%" height="800" type="application/pdf">', unsafe_allow_html=True)
-
     st.markdown("---")
     search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
-
     if search_query:
         with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
             try:
@@ -523,24 +488,14 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                 for i, page in enumerate(reader.pages):
                     text = page.extract_text()
                     if text and search_query.lower() in text.lower():
-                        idx = text.lower().find(search_query.lower())
-                        start = max(0, idx - 40)
-                        end = min(len(text), idx + 40)
-                        snippet = text[start:end].replace('\n', ' ')
-                        results.append((i+1, snippet))
-                
+                        idx, start = text.lower().find(search_query.lower()), max(0, text.lower().find(search_query.lower()) - 40)
+                        results.append((i+1, text[start:min(len(text), idx + 40)].replace('\n', ' ')))
                 if results:
                     st.success(f"✅ Found {len(results)} matching pages!")
                     match_dict = {f"Page {p} ( ...{snip}... )": p for p, snip in results}
                     selected_match = st.selectbox("Select a match to view the document:", list(match_dict.keys()))
-                    
                     if selected_match:
-                        target_page = match_dict[selected_match]
-                        pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}#page={target_page}" width="100%" height="800" type="application/pdf">'
-                        st.markdown(pdf_display, unsafe_allow_html=True)
-                else:
-                    st.warning("No results found in the manual.")
-            except Exception as e:
-                st.error(f"Error reading PDF. ({e})")
-else:
-    st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
+                        st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}#page={match_dict[selected_match]}" width="100%" height="800" type="application/pdf">', unsafe_allow_html=True)
+                else: st.warning("No results found.")
+            except Exception as e: st.error(f"Error reading PDF. ({e})")
+else: st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
