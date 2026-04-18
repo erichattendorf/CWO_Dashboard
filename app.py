@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components # New tool for the background alarm
+import streamlit.components.v1 as components
 import requests
 import re
 from datetime import datetime, timezone, timedelta
@@ -15,39 +15,104 @@ with st.sidebar:
     st.title("⏰ METAR Alarm")
     st.markdown("Set a time to get an audio/visual alert before the XX:53 observation.")
     
-    alarm_minute = st.number_input("Alert me at XX past the hour:", min_value=0, max_value=59, value=48, step=1)
+    # The new Kill Switch!
+    alarm_enabled = st.toggle("Enable Alarm", value=True)
     
-    # JavaScript injected to run the clock and sound the alarm in the background
-    alarm_html = f"""
-    <div id="alarm-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 10px; margin-top: 20px;">
-        <h3 id="alarm-text" style="color: grey; margin: 0;">Monitoring clock for XX:{alarm_minute:02d}...</h3>
-    </div>
-    <script>
-    setInterval(function() {{
-        var d = new Date();
-        var box = document.getElementById("alarm-box");
-        var txt = document.getElementById("alarm-text");
+    if alarm_enabled:
+        alarm_minute = st.number_input("Alert me at XX past the hour:", min_value=0, max_value=59, value=48, step=1)
         
-        // Trigger the alarm when the minute matches and we are in the first 3 seconds of that minute
-        if (d.getMinutes() === {alarm_minute} && d.getSeconds() < 3) {{
-            box.style.backgroundColor = "#ff4b4b";
-            txt.style.color = "white";
-            txt.innerHTML = "🚨 TIME TO GO OUTSIDE! 🚨";
-            
-            // Play a loud beep
-            var audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
-            audio.play();
-        }} 
-        // Reset the box back to normal after the minute passes
-        else if (d.getMinutes() !== {alarm_minute}) {{
-            box.style.backgroundColor = "transparent";
-            txt.style.color = "grey";
-            txt.innerHTML = "Monitoring clock for XX:{alarm_minute:02d}...";
+        # JavaScript injected to run the clock and sound the SOS alarm in the background
+        alarm_html = f"""
+        <div id="alarm-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 10px; margin-top: 10px; transition: 0.3s;">
+            <h3 id="alarm-text" style="color: grey; margin: 0; font-size: 16px;">Monitoring clock for XX:{alarm_minute:02d}...</h3>
+            <button onclick="playSOS()" style="margin-top:15px; padding: 6px 12px; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; background: #f0f2f6;">🔊 Test SOS Sound</button>
+            <p style="font-size: 11px; color: gray; margin-top: 5px;">(Click 'Test' once to allow your browser to play audio automatically!)</p>
+        </div>
+        <script>
+        // Web Audio API for mathematically precise SOS Morse Code
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function playBeep(duration, delay) {{
+            if (!audioCtx) audioCtx = new AudioContext();
+            setTimeout(() => {{
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.frequency.value = 700; // 700Hz is a classic, piercing Morse tone
+                osc.type = "sine";
+                
+                gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.01);
+                gain.gain.setValueAtTime(1, audioCtx.currentTime + duration - 0.01);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+                
+                osc.start(audioCtx.currentTime);
+                osc.stop(audioCtx.currentTime + duration);
+            }}, delay * 1000);
         }}
-    }}, 1000);
-    </script>
-    """
-    components.html(alarm_html, height=150)
+
+        function playSOS() {{
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            let t = 0;
+            const dit = 0.1;
+            const dah = 0.3;
+            const p = 0.1; // pause between beeps
+            const lp = 0.3; // letter pause
+
+            function addSOS() {{
+                // S (... )
+                playBeep(dit, t); t += dit + p;
+                playBeep(dit, t); t += dit + p;
+                playBeep(dit, t); t += dit + lp;
+                // O (--- )
+                playBeep(dah, t); t += dah + p;
+                playBeep(dah, t); t += dah + p;
+                playBeep(dah, t); t += dah + lp;
+                // S (... )
+                playBeep(dit, t); t += dit + p;
+                playBeep(dit, t); t += dit + p;
+                playBeep(dit, t); t += dit + 1.0; // 1 second pause before repeating the whole SOS
+            }}
+
+            // Play the SOS pattern 3 times
+            addSOS();
+            addSOS();
+            addSOS();
+        }}
+
+        let alarmPlayed = false;
+
+        setInterval(function() {{
+            var d = new Date();
+            var box = document.getElementById("alarm-box");
+            var txt = document.getElementById("alarm-text");
+            
+            if (d.getMinutes() === {alarm_minute}) {{
+                box.style.backgroundColor = "#ff4b4b";
+                txt.style.color = "white";
+                txt.innerHTML = "🚨 TIME TO GO OUTSIDE! 🚨";
+                
+                if (!alarmPlayed && d.getSeconds() < 10) {{ // Trigger once during the first 10 seconds of the minute
+                    playSOS();
+                    alarmPlayed = true;
+                }}
+            }} 
+            else {{
+                box.style.backgroundColor = "transparent";
+                txt.style.color = "grey";
+                txt.innerHTML = "Monitoring clock for XX:{alarm_minute:02d}...";
+                alarmPlayed = false; // Reset for the next hour
+            }}
+        }}, 1000);
+        </script>
+        """
+        components.html(alarm_html, height=200)
+    else:
+        st.info("🔕 Alarm is currently disabled.")
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -440,13 +505,11 @@ st.subheader("📚 JO 7900.5E Reference Manual")
 st.markdown("Search the official FAA Surface Weather Observing manual instantly, or view it directly.")
 
 if os.path.exists("Order_JO_7900.5E.pdf"):
-    # Convert PDF to base64 internally to bypass Chrome's CDN block
     with open("Order_JO_7900.5E.pdf", "rb") as pdf_file:
         PDFbyte = pdf_file.read()
     base64_pdf = base64.b64encode(PDFbyte).decode('utf-8')
 
     with st.expander("📖 Click Here to Browse the Full JO 7900.5E Manual"):
-        # Using <embed> tag instead of <iframe> prevents Chrome's white-screen block
         st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}#page=1" width="100%" height="800" type="application/pdf">', unsafe_allow_html=True)
 
     st.markdown("---")
@@ -473,7 +536,6 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                     
                     if selected_match:
                         target_page = match_dict[selected_match]
-                        # Render the PDF viewer embed automatically scrolled to the target page
                         pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}#page={target_page}" width="100%" height="800" type="application/pdf">'
                         st.markdown(pdf_display, unsafe_allow_html=True)
                 else:
