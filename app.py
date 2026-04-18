@@ -1,16 +1,14 @@
 import streamlit as st
 import requests
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
-import time
 import PyPDF2
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
 
 # --- HEADER WITH LOGOS ---
-# Adjusted the column ratio from [5,1] to [4,2] to give the images much more room
 header_col1, header_col2 = st.columns([4, 2])
 
 with header_col1:
@@ -21,13 +19,11 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
-        # Cranked the width up to 180 to make the Cat much more visible!
         if os.path.exists("Cat and Hat.jpg"):
             st.image("Cat and Hat.jpg", width=180)
         else:
             st.caption("[Cat & Hat Missing]")
     with logo2:
-        # Bumped the NWS logo slightly to match the new size ratio
         if os.path.exists("NWS.png"):
             st.image("NWS.png", width=100)
         else:
@@ -37,16 +33,51 @@ st.divider()
 
 # --- FUNCTIONS ---
 
-def get_5min_asos():
-    """Pulls high-frequency 5-minute ASOS data using a hidden Cache-Buster."""
+def parse_nws_properties(props):
+    """Helper function to turn NWS raw variables into a readable string."""
+    timestamp = props.get('timestamp')
+    if not timestamp: return None, None, None, None
+    
+    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    time_str = dt.strftime("%H:%MZ")
+    
     try:
-        url = "https://api.weather.gov/stations/KBHM/observations?limit=3"
-        current_time = int(time.time())
+        temp_c = float(props.get('temperature', {}).get('value'))
+        dew_c = float(props.get('dewpoint', {}).get('value'))
+    except (TypeError, ValueError):
+        temp_c, dew_c = None, None
+
+    wdir = props.get('windDirection', {}).get('value')
+    wspd_kmh = props.get('windSpeed', {}).get('value')
+    wdir_str = f"{int(wdir):03d}" if wdir is not None else "VRB"
+    wspd_kts = int(round(wspd_kmh / 1.852)) if wspd_kmh is not None else 0
+    wind_str = f"{wdir_str}@{wspd_kts}kt"
+    
+    vis_m = props.get('visibility', {}).get('value')
+    vis_sm = round(vis_m / 1609.34, 1) if vis_m is not None else "M"
+    
+    temp_str = f"{int(temp_c)}" if temp_c is not None else "M"
+    dew_str = f"{int(dew_c)}" if dew_c is not None else "M"
+    
+    pres_pa = props.get('barometricPressure', {}).get('value')
+    pres_inhg = round(pres_pa / 3386.389, 2) if pres_pa is not None else "M"
+    
+    formatted_str = f"({time_str}) | Wind: {wind_str} | Vis: {vis_sm}SM | Temp/Dew: {temp_str}/{dew_str}°C | Alt: {pres_inhg} inHg"
+    return formatted_str, timestamp, temp_c, dew_c
+
+
+def get_5min_asos():
+    """Pulls high-frequency 5-minute ASOS data using a Dynamic Time-Window Cache Buster."""
+    try:
+        # CACHE BUSTER: We ask for data starting exactly 2 hours ago down to the current second. 
+        # Because the timestamp changes every second, it forces the NWS server to bypass the cache!
+        now = datetime.now(timezone.utc)
+        start_time = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        url = f"https://api.weather.gov/stations/KBHM/observations?start={start_time}"
         headers = {
-            "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 CB/{current_time}",
-            "Accept": "application/geo+json",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache"
+            "User-Agent": "BHM_CWO_Dashboard/1.0",
+            "Accept": "application/geo+json"
         }
         response = requests.get(url, headers=headers, timeout=5)
         
@@ -55,36 +86,16 @@ def get_5min_asos():
             if len(features) > 0:
                 ob = features[0]
                 props = ob['properties']
-                timestamp = props.get('timestamp')
                 raw = props.get('rawMessage')
+                formatted_str, timestamp, temp_c, dew_c = parse_nws_properties(props)
                 
-                try:
-                    temp_c = float(props.get('temperature', {}).get('value'))
-                    dew_c = float(props.get('dewpoint', {}).get('value'))
-                except (TypeError, ValueError):
-                    temp_c, dew_c = None, None
-                
-                if not raw and timestamp:
-                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    time_str = dt.strftime("%H:%MZ")
+                if formatted_str:
+                    if raw:
+                        final_raw = f"BHM 5-MIN ({timestamp[11:16]}Z) | {raw}"
+                    else:
+                        final_raw = f"BHM 5-MIN {formatted_str}"
+                    return final_raw, timestamp, temp_c, dew_c, None
                     
-                    wdir = props.get('windDirection', {}).get('value')
-                    wspd_kmh = props.get('windSpeed', {}).get('value')
-                    wdir_str = f"{int(wdir):03d}" if wdir is not None else "VRB"
-                    wspd_kts = int(round(wspd_kmh / 1.852)) if wspd_kmh is not None else 0
-                    wind_str = f"{wdir_str}@{wspd_kts}kt"
-                    
-                    vis_m = props.get('visibility', {}).get('value')
-                    vis_sm = round(vis_m / 1609.34, 1) if vis_m is not None else "M"
-                    temp_str = f"{int(temp_c)}" if temp_c is not None else "M"
-                    dew_str = f"{int(dew_c)}" if dew_c is not None else "M"
-                    pres_pa = props.get('barometricPressure', {}).get('value')
-                    pres_inhg = round(pres_pa / 3386.389, 2) if pres_pa is not None else "M"
-                    
-                    raw = f"BHM 5-MIN ({time_str}) | Wind: {wind_str} | Vis: {vis_sm}SM | Temp/Dew: {temp_str}/{dew_str}°C | Alt: {pres_inhg} inHg"
-                    
-                if timestamp:
-                    return raw, timestamp, temp_c, dew_c, None
             return None, None, None, None, "No data features found in NWS ping."
         else:
             return None, None, None, None, f"HTTP {response.status_code}"
@@ -92,34 +103,33 @@ def get_5min_asos():
         return None, None, None, None, f"Error: {str(e)}"
 
 def get_regional_5min():
-    """Pulls the last hour (12 obs) of 5-min data for regional stations."""
+    """Pulls the 5-min data for regional stations and formats it beautifully."""
     stations = ["KTCL", "KANB", "KEET", "KPLR"]
     data = {}
-    current_time = int(time.time())
+    
+    now = datetime.now(timezone.utc)
+    start_time = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    
     for stn in stations:
         try:
-            url = f"https://api.weather.gov/stations/{stn}/observations?limit=12"
-            headers = {
-                "User-Agent": f"Mozilla/5.0 CB/{current_time}",
-                "Accept": "application/geo+json"
-            }
-            res = requests.get(url, headers=headers, timeout=4)
+            url = f"https://api.weather.gov/stations/{stn}/observations?start={start_time}"
+            headers = {"User-Agent": "BHM_CWO_Dashboard/1.0", "Accept": "application/geo+json"}
+            res = requests.get(url, headers=headers, timeout=5)
+            
             if res.status_code == 200:
                 features = res.json().get('features', [])
                 parsed = []
-                for ob in features:
+                # Only take the 6 most recent pings per station
+                for ob in features[:6]:
                     props = ob['properties']
-                    ts = props.get('timestamp')
                     raw = props.get('rawMessage')
-                    if ts:
-                        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                        t_str = dt.strftime("%H:%MZ")
-                        if not raw:
-                            temp = props.get('temperature', {}).get('value')
-                            temp_s = f"{int(temp)}C" if temp is not None else "M"
-                            parsed.append(f"{t_str} | [Raw Suppressed by NWS] Temp: {temp_s}")
+                    formatted_str, ts, _, _ = parse_nws_properties(props)
+                    
+                    if formatted_str:
+                        if raw:
+                            parsed.append(f"({ts[11:16]}Z) | {raw}")
                         else:
-                            parsed.append(f"{t_str} | {raw}")
+                            parsed.append(formatted_str)
                 data[stn] = parsed
             else:
                 data[stn] = [f"API Error: HTTP {res.status_code}"]
@@ -175,7 +185,7 @@ if latest_raw and latest_ts:
         age_minutes = (now - ob_time).total_seconds() / 60
 
         col_a, col_b = st.columns([2, 1])
-        with col_a: st.code(f"ASOS 5-MIN PING: {latest_raw}", language="bash")
+        with col_a: st.code(f"{latest_raw}", language="bash")
         with col_b:
             if age_minutes > 20: st.error(f"🚨 **COMM WARNING:** Ping is **{int(age_minutes)} mins old!** Check long-line.")
             else: st.success(f"✅ **Comms Good:** Latency is **{int(age_minutes)}** mins.")
@@ -204,9 +214,9 @@ with top_col1:
         else: st.warning("Could not load AWC METARs.")
 
     with tab_regional:
-        st.markdown("**Last Hour of 5-Minute ASOS Data** (KTCL, KANB, KEET, KPLR)")
+        st.markdown("**Last Hour of 5-Minute ASOS Data**")
         if st.button("Fetch Fresh Regional Data"):
-            with st.spinner("Pulling 48 regional observations..."):
+            with st.spinner("Bypassing NWS cache & pulling regional observations..."):
                 reg_data = get_regional_5min()
                 for stn, obs_list in reg_data.items():
                     st.markdown(f"**{stn}**")
@@ -392,18 +402,8 @@ if search_query:
                             start = max(0, idx - 80)
                             end = min(len(text), idx + 80)
                             snippet = text[start:end].replace('\n', ' ')
-                            # Save the full text for the expander dropdown
                             results.append((i+1, snippet, text))
                 
                 if results:
                     st.success(f"✅ Found {len(results)} matching pages in the JO 7900.5E!")
-                    for page_num, snippet, full_text in results:
-                        # Use an expander dropdown to show the full page text!
-                        with st.expander(f"📄 **Page {page_num}:** `...{snippet}...`"):
-                            st.text(full_text)
-                else:
-                    st.warning("No results found in the manual.")
-            except Exception as e:
-                st.error(f"Error reading PDF. Are you sure it isn't corrupted? ({e})")
-    else:
-        st.error("⚠️ `Order_JO_7900.5E.pdf` not found. Please upload it to your GitHub repository in the exact same folder as the app!")
+                    for page_num, snippet, full_text in results
