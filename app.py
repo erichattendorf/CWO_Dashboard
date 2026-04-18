@@ -13,12 +13,12 @@ st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sideba
 if "pdf_page" not in st.session_state:
     st.session_state.pdf_page = 0
 
-# --- SIDEBAR: METAR ALARM ---
+# --- SIDEBAR: ALERTS ---
 with st.sidebar:
-    st.title("⏰ METAR Alarm")
-    st.markdown("Alerts before the XX:53 observation.")
+    st.title("🚨 ALERTS")
+    st.markdown("Audio/Visual warnings before the XX:53 observation.")
     
-    alarm_enabled = st.toggle("Enable Alarm", value=True)
+    alarm_enabled = st.toggle("Enable Alerts", value=True)
     
     if alarm_enabled:
         alarm_minute = st.number_input("Trigger at XX past hour:", min_value=0, max_value=59, value=48, step=1)
@@ -39,20 +39,12 @@ with st.sidebar:
         with col_v2:
             alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # JavaScript to Auto-Expand the Sidebar, Sound the Alarm, and create a Backup Floating Button
+        # JavaScript to Sound the Alarm and create a highly visible Popup Alert Box
         alarm_html = f"""
         <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
-            <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Sound</button>
+            <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
             <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
-        </div>
-
-        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
-            <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
-            <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
-            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
-                🔕 Silence Current Alarm
-            </button>
         </div>
 
         <script>
@@ -147,13 +139,10 @@ with st.sidebar:
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
             
-            document.getElementById('alert-box').style.display = 'none';
-            document.getElementById('idle-box').style.display = 'block';
-            
             // Hide the floating backup button
             try {{
                 const parentDoc = window.parent.document;
-                let floatBtn = parentDoc.getElementById('floating-silence-btn');
+                let floatBtn = parentDoc.getElementById('floating-alert-box');
                 if (floatBtn) floatBtn.style.display = "none";
             }} catch(e) {{}}
             
@@ -161,46 +150,51 @@ with st.sidebar:
         }};
 
         function triggerAlarmUI(isTest = false) {{
-            // 1. Attempt to force Streamlit Sidebar open (Using updated Streamlit selectors)
+            // 1. Aggressive attempt to force Streamlit Sidebar open
             try {{
                 const parent = window.parent.document;
-                const expandBtn = parent.querySelector('[data-testid="stSidebarCollapsedControl"]') || 
-                                  parent.querySelector('[data-testid="collapsedControl"]');
+                const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
                 if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
-                    expandBtn.click();
+                    // Try to spoof a real mouse click
+                    const mouseEvent = new MouseEvent('click', {{bubbles: true, cancelable: true, view: window.parent}});
+                    expandBtn.dispatchEvent(mouseEvent);
                 }}
             }} catch(e) {{}}
 
-            // 2. Show the sidebar alert
-            document.getElementById('idle-box').style.display = 'none';
-            document.getElementById('alert-box').style.display = 'block';
-            
-            // 3. Create a Backup Floating Button (Top Right of main screen) just in case sidebar is stuck
+            // 2. Create the Highly Visible Floating Box (Top Center of main screen)
             try {{
                 const parentDoc = window.parent.document;
-                let floatBtn = parentDoc.getElementById('floating-silence-btn');
-                if (!floatBtn) {{
-                    floatBtn = parentDoc.createElement("button");
-                    floatBtn.id = "floating-silence-btn";
-                    floatBtn.innerHTML = "🚨 🔕 Silence Alarm";
-                    floatBtn.style.position = "fixed";
-                    floatBtn.style.top = "20px";
-                    floatBtn.style.right = "20px";
-                    floatBtn.style.zIndex = "9999999";
-                    floatBtn.style.padding = "15px 25px";
-                    floatBtn.style.backgroundColor = "#ff4b4b";
-                    floatBtn.style.color = "white";
-                    floatBtn.style.border = "none";
-                    floatBtn.style.borderRadius = "8px";
-                    floatBtn.style.fontSize = "16px";
-                    floatBtn.style.fontWeight = "bold";
-                    floatBtn.style.cursor = "pointer";
-                    floatBtn.style.boxShadow = "0px 4px 10px rgba(0,0,0,0.3)";
+                let floatBox = parentDoc.getElementById('floating-alert-box');
+                if (!floatBox) {{
+                    floatBox = parentDoc.createElement("div");
+                    floatBox.id = "floating-alert-box";
+                    floatBox.style.position = "fixed";
+                    floatBox.style.top = "20px";
+                    floatBox.style.left = "50%";
+                    floatBox.style.transform = "translateX(-50%)";
+                    floatBox.style.zIndex = "9999999";
+                    floatBox.style.padding = "20px";
+                    floatBox.style.backgroundColor = "#ff4b4b";
+                    floatBox.style.color = "white";
+                    floatBox.style.borderRadius = "12px";
+                    floatBox.style.textAlign = "center";
+                    floatBox.style.boxShadow = "0px 10px 25px rgba(0,0,0,0.4)";
+                    floatBox.style.fontFamily = "sans-serif";
                     
-                    floatBtn.onclick = window.silenceAlarm;
-                    parentDoc.body.appendChild(floatBtn);
+                    floatBox.innerHTML = `
+                        <h2 style="margin: 0 0 5px 0; font-size: 24px;">🚨 OBSERVATION DUE 🚨</h2>
+                        <button id="float-silence-btn" style="margin-top: 10px; padding: 12px 25px; font-size: 16px; font-weight: bold; background: white; color: #cc0000; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
+                            🔕 Silence Alarm
+                        </button>
+                        <p style="margin: 10px 0 0 0; font-size: 12px; opacity: 0.9;">
+                            *(To change Alert settings, open the <b>ALERTS</b> menu in the left sidebar)*
+                        </p>
+                    `;
+                    parentDoc.body.appendChild(floatBox);
+
+                    parentDoc.getElementById("float-silence-btn").onclick = window.silenceAlarm;
                 }}
-                floatBtn.style.display = "block";
+                floatBox.style.display = "block";
             }} catch(e) {{}}
 
             playAlarmAudio();
@@ -228,21 +222,18 @@ with st.sidebar:
             }} else {{
                 hasTriggeredThisHour = false; 
                 isSilencedForThisMinute = false;
-                document.getElementById('alert-box').style.display = 'none';
-                document.getElementById('idle-box').style.display = 'block';
-                
                 try {{
                     const parentDoc = window.parent.document;
-                    let floatBtn = parentDoc.getElementById('floating-silence-btn');
-                    if (floatBtn) floatBtn.style.display = "none";
+                    let floatBox = parentDoc.getElementById('floating-alert-box');
+                    if (floatBox) floatBox.style.display = "none";
                 }} catch(e) {{}}
             }}
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=220)
+        components.html(alarm_html, height=120)
     else:
-        st.info("🔕 Alarm is currently disabled.")
+        st.info("🔕 Alerts Disabled.")
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -600,7 +591,6 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                 else: 
                     st.warning("No results found.")
 
-        # --- THE UPGRADED PDF PAGINATOR ---
         if "pdf_page" in st.session_state and 0 <= st.session_state.pdf_page < total_pages:
             st.markdown("---")
             
@@ -612,7 +602,6 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                     st.rerun()
                     
             with col_p2:
-                # The Jump Box! Type any number and hit enter to instantly load that page.
                 jump_val = st.number_input(f"Jump to Page (1 - {total_pages}):", min_value=1, max_value=total_pages, value=st.session_state.pdf_page + 1)
                 if jump_val - 1 != st.session_state.pdf_page:
                     st.session_state.pdf_page = jump_val - 1
@@ -623,7 +612,6 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                     st.session_state.pdf_page += 1
                     st.rerun()
 
-            # Render the specific page as a crisp image
             page = doc.load_page(st.session_state.pdf_page)
             pix = page.get_pixmap(dpi=150)
             st.image(pix.tobytes("png"), use_container_width=True)
