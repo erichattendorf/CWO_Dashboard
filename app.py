@@ -9,6 +9,37 @@ import fitz  # PyMuPDF for high-res PDF rendering
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
 
+# --- CSS HACK: TURN THE SIDEBAR ARROW INTO A GIANT "ALERTS" BUTTON ---
+st.markdown("""
+<style>
+    /* Hijack the hidden sidebar toggle button and make it huge and red */
+    [data-testid="collapsedControl"] {
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 0 8px 8px 0 !important;
+        padding: 5px 15px 5px 10px !important;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.3) !important;
+        width: auto !important;
+        transition: 0.2s !important;
+    }
+    /* Add the word "ALERTS" right next to the arrow */
+    [data-testid="collapsedControl"]::after {
+        content: " 🚨 ALERTS";
+        font-family: sans-serif;
+        font-weight: bold;
+        font-size: 16px;
+        margin-left: 5px;
+    }
+    [data-testid="collapsedControl"]:hover {
+        background-color: #cc0000 !important;
+    }
+    /* Hide the tooltip that pops up over it */
+    [data-testid="collapsedControl"] title {
+        display: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- INITIALIZE SESSION STATE FOR PDF VIEWER ---
 if "pdf_page" not in st.session_state:
     st.session_state.pdf_page = 0
@@ -39,12 +70,20 @@ with st.sidebar:
         with col_v2:
             alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # JavaScript to Sound the Alarm and create a highly visible Popup Alert Box
+        # JavaScript to Sound the Alarm and create a Highly Visible Popup Alert Box
         alarm_html = f"""
         <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
             <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
             <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
+        </div>
+
+        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
+            <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
+            <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
+            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
+                🔕 Silence Current Alarm
+            </button>
         </div>
 
         <script>
@@ -139,10 +178,11 @@ with st.sidebar:
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
             
-            // Hide the floating backup button
+            document.getElementById('alert-box').style.display = 'none';
+            document.getElementById('idle-box').style.display = 'block';
+            
             try {{
-                const parentDoc = window.parent.document;
-                let floatBtn = parentDoc.getElementById('floating-alert-box');
+                let floatBtn = window.parent.document.getElementById('floating-alert-box');
                 if (floatBtn) floatBtn.style.display = "none";
             }} catch(e) {{}}
             
@@ -150,18 +190,20 @@ with st.sidebar:
         }};
 
         function triggerAlarmUI(isTest = false) {{
-            // 1. Aggressive attempt to force Streamlit Sidebar open
+            // 1. Aggressive attempt to force Streamlit Sidebar open (Bypassing Streamlit Cloud Iframes)
             try {{
                 const parent = window.parent.document;
                 const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
                 if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
-                    // Try to spoof a real mouse click
-                    const mouseEvent = new MouseEvent('click', {{bubbles: true, cancelable: true, view: window.parent}});
-                    expandBtn.dispatchEvent(mouseEvent);
+                    expandBtn.click();
                 }}
             }} catch(e) {{}}
 
-            // 2. Create the Highly Visible Floating Box (Top Center of main screen)
+            // 2. Show the inner sidebar alert
+            document.getElementById('idle-box').style.display = 'none';
+            document.getElementById('alert-box').style.display = 'block';
+            
+            // 3. Create Backup Floating Button just in case browser blocks the sidebar from opening
             try {{
                 const parentDoc = window.parent.document;
                 let floatBox = parentDoc.getElementById('floating-alert-box');
@@ -186,9 +228,6 @@ with st.sidebar:
                         <button id="float-silence-btn" style="margin-top: 10px; padding: 12px 25px; font-size: 16px; font-weight: bold; background: white; color: #cc0000; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
                             🔕 Silence Alarm
                         </button>
-                        <p style="margin: 10px 0 0 0; font-size: 12px; opacity: 0.9;">
-                            *(To change Alert settings, open the <b>ALERTS</b> menu in the left sidebar)*
-                        </p>
                     `;
                     parentDoc.body.appendChild(floatBox);
 
@@ -222,9 +261,10 @@ with st.sidebar:
             }} else {{
                 hasTriggeredThisHour = false; 
                 isSilencedForThisMinute = false;
+                document.getElementById('alert-box').style.display = 'none';
+                document.getElementById('idle-box').style.display = 'block';
                 try {{
-                    const parentDoc = window.parent.document;
-                    let floatBox = parentDoc.getElementById('floating-alert-box');
+                    let floatBox = window.parent.document.getElementById('floating-alert-box');
                     if (floatBox) floatBox.style.display = "none";
                 }} catch(e) {{}}
             }}
@@ -402,7 +442,8 @@ if latest_raw and latest_ts:
         col_a, col_b = st.columns([2, 1])
         with col_a: st.code(f"{latest_raw}", language="bash")
         with col_b:
-            if age_minutes > 20: st.error(f"🚨 **COMM WARNING:** Ping is **{int(age_minutes)} mins old!** Check long-line.")
+            # BUMPED TIMEOUT TO 45 MINS TO REDUCE NWS CACHING FALSE ALARMS
+            if age_minutes > 45: st.error(f"🚨 **COMM WARNING:** Ping is **{int(age_minutes)} mins old!** Check long-line.")
             else: st.success(f"✅ **Comms Good:** Latency is **{int(age_minutes)}** mins.")
     except: st.warning("Could not calculate age.")
 else: st.warning(f"⚠️ 5-minute network ping unavailable. Diagnostic code: {diag_err}")
