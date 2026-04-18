@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import re
 from datetime import datetime, timezone
-import os # New tool to safely check for files
+import os
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
@@ -18,24 +18,22 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
-        # Note: If your file on GitHub is NOAA.png, change the name below!
-        if os.path.exists("NOAA.png"):
-            st.image("NOAA.png", width=75)
+        if os.path.exists("noaa.png"):
+            st.image("noaa.png", width=75)
         else:
-            st.caption("[NOAA Logo Missing]")
+            st.caption("[NOAA Logo]")
     with logo2:
-        # Note: If your file on GitHub is NWS.png, change the name below!
-        if os.path.exists("NWS.png"):
-            st.image("NWS.png", width=75)
+        if os.path.exists("nws.png"):
+            st.image("nws.png", width=75)
         else:
-            st.caption("[NWS Logo Missing]")
+            st.caption("[NWS Logo]")
 
 st.divider()
 
 # --- FUNCTIONS ---
 
 def get_5min_asos():
-    """Pulls the high-frequency 5-minute ASOS data and formats it if the raw string is missing."""
+    """Pulls high-frequency 5-minute ASOS data and extracts Temp/Dew for calculations."""
     try:
         url = "https://api.weather.gov/stations/KBHM/observations?limit=3"
         headers = {
@@ -52,6 +50,13 @@ def get_5min_asos():
                 timestamp = props.get('timestamp')
                 raw = props.get('rawMessage')
                 
+                # Extract Temp and Dewpoint (Celsius) for Cloud Base Calculator
+                try:
+                    temp_c = float(props.get('temperature', {}).get('value'))
+                    dew_c = float(props.get('dewpoint', {}).get('value'))
+                except (TypeError, ValueError):
+                    temp_c, dew_c = None, None
+                
                 if not raw and timestamp:
                     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     time_str = dt.strftime("%H:%MZ")
@@ -65,10 +70,8 @@ def get_5min_asos():
                     vis_m = props.get('visibility', {}).get('value')
                     vis_sm = round(vis_m / 1609.34, 1) if vis_m is not None else "M"
                     
-                    temp = props.get('temperature', {}).get('value')
-                    dew = props.get('dewpoint', {}).get('value')
-                    temp_str = f"{int(temp)}" if temp is not None else "M"
-                    dew_str = f"{int(dew)}" if dew is not None else "M"
+                    temp_str = f"{int(temp_c)}" if temp_c is not None else "M"
+                    dew_str = f"{int(dew_c)}" if dew_c is not None else "M"
                     
                     pres_pa = props.get('barometricPressure', {}).get('value')
                     pres_inhg = round(pres_pa / 3386.389, 2) if pres_pa is not None else "M"
@@ -76,12 +79,12 @@ def get_5min_asos():
                     raw = f"BHM 5-MIN ({time_str}) | Wind: {wind_str} | Vis: {vis_sm}SM | Temp/Dew: {temp_str}/{dew_str}°C | Alt: {pres_inhg} inHg"
                     
                 if timestamp:
-                    return raw, timestamp, None
-            return None, None, "No data features found in NWS ping."
+                    return raw, timestamp, temp_c, dew_c, None
+            return None, None, None, None, "No data features found in NWS ping."
         else:
-            return None, None, f"HTTP {response.status_code}"
+            return None, None, None, None, f"HTTP {response.status_code}"
     except Exception as e:
-        return None, None, f"Error: {str(e)}"
+        return None, None, None, None, f"Error: {str(e)}"
 
 def get_awc_data():
     """Fetches the hourly METARs from the reliable AWC API."""
@@ -135,7 +138,7 @@ cig_thresholds = [3000, 1500, 1000, 500, 200]
 
 # --- COMM CHECK UI (5-Minute Early Warning) ---
 st.markdown("### 📡 System Comm Status (5-Min Early Warning)")
-latest_raw, latest_ts, diag_err = get_5min_asos()
+latest_raw, latest_ts, live_temp_c, live_dew_c, diag_err = get_5min_asos()
 
 if latest_raw and latest_ts:
     try:
@@ -190,94 +193,126 @@ with top_col2:
 
 st.divider()
 
-# --- MIDDLE UI: SPECI CALCULATORS ---
-st.subheader("JO 7900.5F SPECI Calculators")
+# --- MIDDLE UI: SPECI & CLOUD CALCULATORS ---
+st.subheader("🧮 JO 7900.5F Calculators")
 
-col1, col2 = st.columns(2)
+calc_col1, calc_col2, calc_col3 = st.columns(3)
 
-with col1:
-    st.markdown("### 🌫️ Visibility Changes")
+with calc_col1:
+    st.markdown("**🌫️ Visibility SPECI**")
     old_vis = st.number_input("Previous Visibility (SM)", min_value=0.0, value=10.0, step=0.25)
     new_vis = st.number_input("Current Visibility (SM)", min_value=0.0, value=float(live_vis), step=0.25)
-    
     vis_speci, vis_trigger = check_speci(old_vis, new_vis, vis_thresholds)
-    
     if old_vis != new_vis:
-        if vis_speci:
-            st.error(f"🚨 **SPECI REQUIRED:** Visibility crossed the {vis_trigger} SM threshold.")
-        else:
-            st.success("✅ No SPECI required for visibility change.")
+        if vis_speci: st.error(f"🚨 **SPECI REQUIRED:** Crossed {vis_trigger} SM.")
+        else: st.success("✅ No SPECI required.")
 
-with col2:
-    st.markdown("### ☁️ Ceiling Changes")
+with calc_col2:
+    st.markdown("**☁️ Ceiling SPECI**")
     old_cig = st.number_input("Previous Ceiling (Feet)", min_value=0, value=5000, step=100)
     new_cig = st.number_input("Current Ceiling (Feet)", min_value=0, value=int(live_cig), step=100)
-    
     cig_speci, cig_trigger = check_speci(old_cig, new_cig, cig_thresholds)
-    
     if old_cig != new_cig:
-        if cig_speci:
-            st.error(f"🚨 **SPECI REQUIRED:** Ceiling crossed the {cig_trigger} FT threshold.")
-        else:
-            st.success("✅ No SPECI required for ceiling change.")
+        if cig_speci: st.error(f"🚨 **SPECI REQUIRED:** Crossed {cig_trigger} FT.")
+        else: st.success("✅ No SPECI required.")
+
+with calc_col3:
+    st.markdown("**☁️ Convective Cloud Base**")
+    st.caption("Based on 5-Min ASOS Temp/Dew Spread")
+    
+    if live_temp_c is not None and live_dew_c is not None:
+        # Convert C to F
+        t_f = (live_temp_c * 9/5) + 32
+        d_f = (live_dew_c * 9/5) + 32
+        spread_f = t_f - d_f
+        
+        # Exact math from the BHM Cheat Sheet: 10 spread = 2300 AGL
+        ccl_agl = int(spread_f * 230)
+        
+        st.info(f"**Live Spread:** {int(spread_f)}°F")
+        st.success(f"**Suggested Base:** {ccl_agl} ft AGL")
+    else:
+        st.warning("Awaiting live Temp/Dew data...")
 
 st.divider()
 
 # --- BOTTOM UI: REMARKS (RMK) BUILDER ---
 st.subheader("📝 Remarks (RMK) Builder")
-st.markdown("Select current events to generate a correctly formatted JO 7900.5F RMK string.")
+st.markdown("Constructs remarks based on the strict BHM METAR Order of Remarks checklist.")
 
-rmk_col1, rmk_col2, rmk_col3 = st.columns(3)
+rmk_col1, rmk_col2, rmk_col3, rmk_col4 = st.columns(4)
 
 with rmk_col1:
-    st.markdown("**🌪️ Pressure Trend**")
-    pressure_rmk = st.radio("Select Pressure Event:", 
-                            ["None", "Rising Rapidly (PRESRR)", "Falling Rapidly (PRESFR)"], 
-                            index=0)
+    st.markdown("**💨 Peak Wind**")
+    has_pk_wnd = st.checkbox("Peak Wind (>25kt)")
+    if has_pk_wnd:
+        pk_dir = st.number_input("Direction (Deg)", min_value=0, max_value=360, step=10, value=270)
+        pk_spd = st.number_input("Speed (Kts)", min_value=26, max_value=200, step=1, value=35)
+        pk_time = st.number_input("Time (Min)", min_value=0, max_value=59, step=1, value=15)
 
 with rmk_col2:
     st.markdown("**⚡ Lightning**")
     has_ltg = st.checkbox("Lightning Observed")
     if has_ltg:
-        ltg_freq = st.selectbox("Frequency:", ["OCNL (1-6/min)", "FRQ (7-12/min)", "CONS (>12/min)"])
-        ltg_loc = st.selectbox("Location (LTG):", 
-                               ["ALQDS", "OHD", "VC", "DSNT", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+        ltg_freq = st.selectbox("Frequency:", ["OCNL", "FRQ", "CONS"])
+        ltg_types = st.multiselect("Type:", ["IC", "CG", "CC", "CA"], default=["CG"])
+        ltg_loc = st.selectbox("Location (LTG):", ["ALQDS", "OHD", "VC", "DSNT", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
 
 with rmk_col3:
-    st.markdown("**🌩️ Thunderstorm Tracking**")
-    has_ts = st.checkbox("Thunderstorm (TS) Active")
+    st.markdown("**🌩️ Thunderstorm**")
+    has_ts = st.checkbox("Thunderstorm Active")
     if has_ts:
-        ts_loc = st.selectbox("Location (TS):", 
-                              ["OHD", "VC", "DSNT", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-        ts_mov = st.selectbox("Moving Toward:", 
-                              ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-
-st.markdown("---")
-rmk_col4, rmk_col5 = st.columns(2)
+        ts_loc = st.selectbox("Location (TS):", ["OHD", "VC", "DSNT", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+        ts_mov = st.selectbox("Moving:", ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
 
 with rmk_col4:
-    st.markdown("**💨 Peak Wind**")
-    has_pk_wnd = st.checkbox("Peak Wind (>25kt)")
-    if has_pk_wnd:
-        pk_dir = st.number_input("Direction (Degrees)", min_value=0, max_value=360, step=10, value=270)
-        pk_spd = st.number_input("Speed (Knots)", min_value=26, max_value=200, step=1, value=35)
-        pk_time = st.number_input("Time (Minutes past hour)", min_value=0, max_value=59, step=1, value=15)
+    st.markdown("**🌧️ Other Elements**")
+    has_virga = st.checkbox("VIRGA")
+    if has_virga:
+        virga_loc = st.selectbox("Direction:", ["ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+        
+    pressure_rmk = st.radio("Pressure:", ["None", "Rising Rapidly", "Falling Rapidly"])
 
+# Display observer reminders if TS is checked
+if has_ts:
+    st.warning("""
+    **🚨 THUNDERSTORM OBSERVER REMINDERS:**
+    * 🌩️ **Present WX:** Make sure to enter `TS`!
+    * ☁️ **Sky Condition:** Append `CB` to the appropriate cloud layer!
+    * 📡 **ALDARS Override:** Change ALDARS to `MAN` (Turn off `SEQ`) if the TS is on-station to prevent ASOS from auto-appending `TS DSNT`.
+    """)
+
+# STRICT ORDER APPLIES HERE (Based on BHM Reference Card)
 rmk_parts = []
+
+# C) PK WND
 if has_pk_wnd: 
     rmk_parts.append(f"PK WND {pk_dir:03d}{pk_spd}/{pk_time:02d}")
+
+# H) LTG
+if has_ltg: 
+    type_str = "".join(ltg_types)
+    rmk_parts.append(f"{ltg_freq} LTG{type_str} {ltg_loc}")
+
+# K) TS / TS LOCATION
 if has_ts:
     ts_str = f"TS {ts_loc}"
     if ts_mov != "Unknown": 
         ts_str += f" MOV {ts_mov}"
     rmk_parts.append(ts_str)
-if has_ltg: 
-    rmk_parts.append(f"LTG {ltg_freq.split(' ')[0]} {ltg_loc}")
-if pressure_rmk == "Rising Rapidly (PRESRR)": 
+
+# M) VIRGA
+if has_virga:
+    if virga_loc == "ALQDS": rmk_parts.append("VIRGA ALQDS")
+    else: rmk_parts.append(f"VIRGA {virga_loc}")
+
+# R) PRESRR/PRESFR
+if pressure_rmk == "Rising Rapidly": 
     rmk_parts.append("PRESRR")
-elif pressure_rmk == "Falling Rapidly (PRESFR)": 
+elif pressure_rmk == "Falling Rapidly": 
     rmk_parts.append("PRESFR")
 
+st.markdown("---")
 if rmk_parts:
     st.success("**Generated Remark String:**")
     st.code("RMK " + " ".join(rmk_parts), language="markdown")
