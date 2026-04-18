@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone, timedelta
 import os
 import PyPDF2
+import base64 # New tool to embed the actual PDF on the screen
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
@@ -19,8 +20,10 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
+        # Made the Cat much bigger and added your creator credit!
         if os.path.exists("Cat and Hat.jpg"):
-            st.image("Cat and Hat.jpg", width=180)
+            st.image("Cat and Hat.jpg", width=250)
+            st.caption("**Created by Eric Hattendorf**")
         else:
             st.caption("[Cat & Hat Missing]")
     with logo2:
@@ -71,7 +74,6 @@ def parse_nws_properties(props):
             base_dict = layer.get('base')
             base_m = base_dict.get('value') if isinstance(base_dict, dict) else None
             
-            # If it says CLR or SKC, do not attach the ASOS laser limit height!
             if base_m is not None and amt not in ["CLR", "SKC"]:
                 base_ft = base_m * 3.28084
                 base_hnds = int(round(base_ft / 100))
@@ -398,36 +400,53 @@ else:
 
 st.divider()
 
-# --- PDF SEARCH ENGINE ---
-st.subheader("📚 JO 7900.5E Reference Manual Search")
-st.markdown("Search the official FAA Surface Weather Observing manual instantly.")
+# --- PDF SEARCH ENGINE WITH VIEWER ---
+st.subheader("📚 JO 7900.5E Reference Manual")
+st.markdown("Search the official FAA Surface Weather Observing manual instantly, or download it.")
 
-search_query = st.text_input("Enter keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
+# Provide a button to just download/open the whole manual in a native viewer
+if os.path.exists("Order_JO_7900.5E.pdf"):
+    with open("Order_JO_7900.5E.pdf", "rb") as pdf_file:
+        PDFbyte = pdf_file.read()
+    st.download_button(label="📖 Click Here to Download / Open Full JO 7900.5E Manual",
+                       data=PDFbyte,
+                       file_name="Order_JO_7900.5E.pdf",
+                       mime='application/pdf')
+
+st.markdown("---")
+search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
 
 if search_query:
     if os.path.exists("Order_JO_7900.5E.pdf"):
         with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
             try:
-                with open("Order_JO_7900.5E.pdf", "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-                    results = []
-                    for i, page in enumerate(reader.pages):
-                        text = page.extract_text()
-                        if text and search_query.lower() in text.lower():
-                            idx = text.lower().find(search_query.lower())
-                            start = max(0, idx - 80)
-                            end = min(len(text), idx + 80)
-                            snippet = text[start:end].replace('\n', ' ')
-                            results.append((i+1, snippet, text))
+                reader = PyPDF2.PdfReader("Order_JO_7900.5E.pdf")
+                results = []
+                for i, page in enumerate(reader.pages):
+                    text = page.extract_text()
+                    if text and search_query.lower() in text.lower():
+                        idx = text.lower().find(search_query.lower())
+                        start = max(0, idx - 40)
+                        end = min(len(text), idx + 40)
+                        snippet = text[start:end].replace('\n', ' ')
+                        results.append((i+1, snippet))
                 
                 if results:
-                    st.success(f"✅ Found {len(results)} matching pages in the JO 7900.5E!")
-                    for page_num, snippet, full_text in results:
-                        with st.expander(f"📄 **Page {page_num}:** `...{snippet}...`"):
-                            st.text(full_text)
+                    st.success(f"✅ Found {len(results)} matching pages!")
+                    
+                    # Create a dropdown to select which page to view
+                    match_dict = {f"Page {p} ( ...{snip}... )": p for p, snip in results}
+                    selected_match = st.selectbox("Select a match to view the document:", list(match_dict.keys()))
+                    
+                    if selected_match:
+                        target_page = match_dict[selected_match]
+                        # Encode the PDF and embed it as an iframe, scrolled to the exact target page
+                        base64_pdf = base64.b64encode(PDFbyte).decode('utf-8')
+                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page={target_page}" width="100%" height="800" type="application/pdf"></iframe>'
+                        st.markdown(pdf_display, unsafe_allow_html=True)
                 else:
                     st.warning("No results found in the manual.")
             except Exception as e:
-                st.error(f"Error reading PDF. Are you sure it isn't corrupted? ({e})")
+                st.error(f"Error reading PDF. ({e})")
     else:
-        st.error("⚠️ `Order_JO_7900.5E.pdf` not found. Please upload it to your GitHub repository in the exact same folder as the app!")
+        st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
