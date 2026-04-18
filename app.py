@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import re
 from datetime import datetime, timezone
+import os # New tool to safely check for files
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
@@ -17,14 +18,16 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
-        try:
+        # Note: If your file on GitHub is NOAA.png, change the name below!
+        if os.path.exists("noaa.png"):
             st.image("noaa.png", width=75)
-        except FileNotFoundError:
+        else:
             st.caption("[NOAA Logo Missing]")
     with logo2:
-        try:
+        # Note: If your file on GitHub is NWS.png, change the name below!
+        if os.path.exists("nws.png"):
             st.image("nws.png", width=75)
-        except FileNotFoundError:
+        else:
             st.caption("[NWS Logo Missing]")
 
 st.divider()
@@ -50,7 +53,6 @@ def get_5min_asos():
                 raw = props.get('rawMessage')
                 
                 if not raw and timestamp:
-                    # Build our own readable string from the raw sensors
                     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     time_str = dt.strftime("%H:%MZ")
                     
@@ -261,21 +263,16 @@ with rmk_col4:
         pk_spd = st.number_input("Speed (Knots)", min_value=26, max_value=200, step=1, value=35)
         pk_time = st.number_input("Time (Minutes past hour)", min_value=0, max_value=59, step=1, value=15)
 
-# Reformatted to avoid long lines breaking during copy/paste
 rmk_parts = []
-
 if has_pk_wnd: 
     rmk_parts.append(f"PK WND {pk_dir:03d}{pk_spd}/{pk_time:02d}")
-
 if has_ts:
     ts_str = f"TS {ts_loc}"
     if ts_mov != "Unknown": 
         ts_str += f" MOV {ts_mov}"
     rmk_parts.append(ts_str)
-
 if has_ltg: 
     rmk_parts.append(f"LTG {ltg_freq.split(' ')[0]} {ltg_loc}")
-
 if pressure_rmk == "Rising Rapidly (PRESRR)": 
     rmk_parts.append("PRESRR")
 elif pressure_rmk == "Falling Rapidly (PRESFR)": 
