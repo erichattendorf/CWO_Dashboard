@@ -39,7 +39,7 @@ with st.sidebar:
         with col_v2:
             alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # JavaScript to Auto-Expand the Sidebar and Sound the Alarm
+        # JavaScript to Auto-Expand the Sidebar, Sound the Alarm, and create a Backup Floating Button
         alarm_html = f"""
         <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
@@ -138,15 +138,71 @@ with st.sidebar:
             else if (s === 15) {{ playTone(100, 'sawtooth', 0, 2.0, v); playTone(102, 'square', 0, 2.0, v*0.5); }}
         }}
 
-        function triggerAlarmUI(isTest = false) {{
-            // Automatically open the sidebar if it is closed!
+        // Make silence function accessible globally
+        window.silenceAlarm = function() {{
+            clearInterval(alarmInterval);
+            clearInterval(titleFlashInterval);
+            try {{ window.parent.document.title = originalTitle; }} catch(e) {{}}
+            
+            activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
+            activeOscillators = [];
+            
+            document.getElementById('alert-box').style.display = 'none';
+            document.getElementById('idle-box').style.display = 'block';
+            
+            // Hide the floating backup button
             try {{
-                const expandBtn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
-                if (expandBtn) {{ expandBtn.click(); }}
+                const parentDoc = window.parent.document;
+                let floatBtn = parentDoc.getElementById('floating-silence-btn');
+                if (floatBtn) floatBtn.style.display = "none";
+            }} catch(e) {{}}
+            
+            isSilencedForThisMinute = true;
+        }};
+
+        function triggerAlarmUI(isTest = false) {{
+            // 1. Attempt to force Streamlit Sidebar open (Using updated Streamlit selectors)
+            try {{
+                const parent = window.parent.document;
+                const expandBtn = parent.querySelector('[data-testid="stSidebarCollapsedControl"]') || 
+                                  parent.querySelector('[data-testid="collapsedControl"]');
+                if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
+                    expandBtn.click();
+                }}
             }} catch(e) {{}}
 
+            // 2. Show the sidebar alert
             document.getElementById('idle-box').style.display = 'none';
             document.getElementById('alert-box').style.display = 'block';
+            
+            // 3. Create a Backup Floating Button (Top Right of main screen) just in case sidebar is stuck
+            try {{
+                const parentDoc = window.parent.document;
+                let floatBtn = parentDoc.getElementById('floating-silence-btn');
+                if (!floatBtn) {{
+                    floatBtn = parentDoc.createElement("button");
+                    floatBtn.id = "floating-silence-btn";
+                    floatBtn.innerHTML = "🚨 🔕 Silence Alarm";
+                    floatBtn.style.position = "fixed";
+                    floatBtn.style.top = "20px";
+                    floatBtn.style.right = "20px";
+                    floatBtn.style.zIndex = "9999999";
+                    floatBtn.style.padding = "15px 25px";
+                    floatBtn.style.backgroundColor = "#ff4b4b";
+                    floatBtn.style.color = "white";
+                    floatBtn.style.border = "none";
+                    floatBtn.style.borderRadius = "8px";
+                    floatBtn.style.fontSize = "16px";
+                    floatBtn.style.fontWeight = "bold";
+                    floatBtn.style.cursor = "pointer";
+                    floatBtn.style.boxShadow = "0px 4px 10px rgba(0,0,0,0.3)";
+                    
+                    floatBtn.onclick = window.silenceAlarm;
+                    parentDoc.body.appendChild(floatBtn);
+                }}
+                floatBtn.style.display = "block";
+            }} catch(e) {{}}
+
             playAlarmAudio();
             
             if (!isTest) {{ 
@@ -159,18 +215,6 @@ with st.sidebar:
                     }}, 1000);
                 }} catch(e) {{}}
             }}
-        }}
-
-        function silenceAlarm() {{
-            clearInterval(alarmInterval);
-            clearInterval(titleFlashInterval);
-            try {{ window.parent.document.title = originalTitle; }} catch(e) {{}}
-            
-            activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
-            activeOscillators = [];
-            document.getElementById('alert-box').style.display = 'none';
-            document.getElementById('idle-box').style.display = 'block';
-            isSilencedForThisMinute = true;
         }}
 
         let hasTriggeredThisHour = false;
@@ -186,6 +230,12 @@ with st.sidebar:
                 isSilencedForThisMinute = false;
                 document.getElementById('alert-box').style.display = 'none';
                 document.getElementById('idle-box').style.display = 'block';
+                
+                try {{
+                    const parentDoc = window.parent.document;
+                    let floatBtn = parentDoc.getElementById('floating-silence-btn');
+                    if (floatBtn) floatBtn.style.display = "none";
+                }} catch(e) {{}}
             }}
         }}, 1000);
         </script>
@@ -520,17 +570,19 @@ st.divider()
 
 # --- PDF SEARCH ENGINE WITH CUSTOM IMAGE PAGINATOR ---
 st.subheader("📚 JO 7900.5E Reference Manual")
-st.markdown("Search the official FAA Surface Weather Observing manual instantly. Pages are rendered securely as images.")
+st.markdown("Search the official FAA manual, or enter a specific page number below to jump directly to it.")
 
 if os.path.exists("Order_JO_7900.5E.pdf"):
-    search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
-    
-    if search_query:
-        with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
-            try:
-                doc = fitz.open("Order_JO_7900.5E.pdf")
+    try:
+        doc = fitz.open("Order_JO_7900.5E.pdf")
+        total_pages = len(doc)
+        
+        search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
+        
+        if search_query:
+            with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
                 results = []
-                for i in range(len(doc)):
+                for i in range(total_pages):
                     text = doc[i].get_text()
                     if search_query.lower() in text.lower():
                         idx = text.lower().find(search_query.lower())
@@ -542,40 +594,30 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                     st.success(f"✅ Found {len(results)} matching pages!")
                     match_dict = {f"Page {p+1} ( ...{snip}... )": p for p, snip in results}
                     
-                    # Layout for selecting a match
-                    selected_match = st.selectbox("Select a match to start reading from:", list(match_dict.keys()))
-                    
-                    if st.button("Load This Page"):
-                        # Save the target page to session state so we can scroll from there!
+                    selected_match = st.selectbox("Select a match to jump to that page:", list(match_dict.keys()))
+                    if st.button("Load Search Result Page"):
                         st.session_state.pdf_page = match_dict[selected_match]
-                        
                 else: 
                     st.warning("No results found.")
-            except Exception as e: 
-                st.error(f"Error reading PDF. Are you sure you updated requirements.txt? ({e})")
 
-    # Render the Interactive Image Viewer
-    if "pdf_page" in st.session_state and st.session_state.pdf_page >= 0:
-        try:
-            doc = fitz.open("Order_JO_7900.5E.pdf")
-            total_pages = len(doc)
-            
-            # Boundary protections
-            if st.session_state.pdf_page < 0:
-                st.session_state.pdf_page = 0
-            elif st.session_state.pdf_page >= total_pages:
-                st.session_state.pdf_page = total_pages - 1
-            
+        # --- THE UPGRADED PDF PAGINATOR ---
+        if "pdf_page" in st.session_state and 0 <= st.session_state.pdf_page < total_pages:
             st.markdown("---")
             
-            # The Paginator Controls
             col_p1, col_p2, col_p3 = st.columns([1, 2, 1])
+            
             with col_p1:
                 if st.button("⬅️ Previous Page") and st.session_state.pdf_page > 0:
                     st.session_state.pdf_page -= 1
                     st.rerun()
+                    
             with col_p2:
-                st.markdown(f"<div style='text-align: center; font-weight: bold;'>Currently Viewing Page {st.session_state.pdf_page + 1} of {total_pages}</div>", unsafe_allow_html=True)
+                # The Jump Box! Type any number and hit enter to instantly load that page.
+                jump_val = st.number_input(f"Jump to Page (1 - {total_pages}):", min_value=1, max_value=total_pages, value=st.session_state.pdf_page + 1)
+                if jump_val - 1 != st.session_state.pdf_page:
+                    st.session_state.pdf_page = jump_val - 1
+                    st.rerun()
+                    
             with col_p3:
                 if st.button("Next Page ➡️") and st.session_state.pdf_page < total_pages - 1:
                     st.session_state.pdf_page += 1
@@ -586,8 +628,7 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
             pix = page.get_pixmap(dpi=150)
             st.image(pix.tobytes("png"), use_container_width=True)
             
-        except Exception as e:
-            st.error("Error loading document view.")
-            
+    except Exception as e: 
+        st.error(f"Error reading PDF. Are you sure you updated requirements.txt? ({e})")
 else: 
     st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
