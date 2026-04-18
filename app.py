@@ -2,52 +2,63 @@ import streamlit as st
 import streamlit.components.v1 as components
 import requests
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
-import fitz  # PyMuPDF for high-res PDF rendering
+import fitz  
+import pytz # New tool to accurately track Central Time for the Shift Checklist
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# --- CSS HACK: TURN THE SIDEBAR ARROW INTO A GIANT "ALERTS" BUTTON ---
-st.markdown("""
-<style>
-    [data-testid="collapsedControl"] {
-        background-color: #ff4b4b !important;
-        color: white !important;
-        border-radius: 0 8px 8px 0 !important;
-        padding: 5px 15px 5px 10px !important;
-        box-shadow: 2px 2px 10px rgba(0,0,0,0.3) !important;
-        width: auto !important;
-        transition: 0.2s !important;
-    }
-    [data-testid="collapsedControl"]::after {
-        content: " 🚨 ALERTS";
-        font-family: sans-serif;
-        font-weight: bold;
-        font-size: 16px;
-        margin-left: 5px;
-    }
-    [data-testid="collapsedControl"]:hover {
-        background-color: #cc0000 !important;
-    }
-    [data-testid="collapsedControl"] title {
-        display: none !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# --- INITIALIZE SESSION STATE FOR PDF VIEWER ---
+# --- INITIALIZE SESSION STATE ---
 if "pdf_page" not in st.session_state:
     st.session_state.pdf_page = 0
 
-# --- SIDEBAR: ALERTS ---
+# Determine Current Shift (Central Time)
+bhm_tz = pytz.timezone("America/Chicago")
+now_ct = datetime.now(bhm_tz)
+hour = now_ct.hour
+
+if 6 <= hour < 14:
+    shift_name = "0600 - 1400 (Morning)"
+    shift_date = now_ct.strftime("%Y-%m-%d")
+elif 14 <= hour < 22:
+    shift_name = "1400 - 2200 (Evening)"
+    shift_date = now_ct.strftime("%Y-%m-%d")
+else:
+    shift_name = "2200 - 0600 (Night)"
+    # If it's past midnight but before 6am, it belongs to yesterday's night shift cycle
+    shift_date = (now_ct - timedelta(days=1)).strftime("%Y-%m-%d") if hour < 6 else now_ct.strftime("%Y-%m-%d")
+
+current_shift_id = f"{shift_date}_{shift_name}"
+
+# --- SIDEBAR: SHIFT DUTIES & ALERTS ---
 with st.sidebar:
-    st.title("🚨 ALERTS")
-    st.markdown("Audio/Visual warnings before the XX:53 observation.")
+    st.title("📋 Shift Duties")
+    st.caption(f"Current Shift: **{shift_name}**")
     
-    # DEFAULTED TO OFF!
-    alarm_enabled = st.toggle("Enable Alerts", value=False)
+    # Auto-Resetting Checklist
+    checklist_items = [
+        "Sign-on OID",
+        "Sign-in Contractor & FAA Logs",
+        "Receive Shift Briefing",
+        "Check Digital T/Td Unit (Charged)",
+        "Accomplish METAR/SPECI",
+        "Check Read File",
+        "Mid-shift: Time-check (Naval Obs)",
+        "Mid-shift: Phone check (ATC/TRACON)",
+        "QA TWO previous shifts",
+        "Review OBS for electronic PMR"
+    ]
+    
+    for item in checklist_items:
+        # The key ties the checkbox to the specific shift. If the shift changes, it resets!
+        st.checkbox(item, key=f"chk_{current_shift_id}_{item}")
+        
+    st.divider()
+    
+    st.title("⏰ METAR Alerts")
+    alarm_enabled = st.toggle("Enable Audio Alert", value=False)
     
     if alarm_enabled:
         alarm_minute = st.number_input("Trigger at XX past hour:", min_value=0, max_value=59, value=48, step=1)
@@ -63,24 +74,21 @@ with st.sidebar:
         sound_id = int(alarm_sound.split(".")[0])
         
         col_v1, col_v2 = st.columns(2)
-        with col_v1:
-            alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
-        with col_v2:
-            alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
+        with col_v1: alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
+        with col_v2: alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # Cleaned up JavaScript to auto-expand the sidebar WITHOUT full screen pop-ups
+        # Alarm UI completely contained inside the sidebar
         alarm_html = f"""
-        <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
-            <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
-            <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
-            <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
+        <div id="idle-box" style="text-align:center; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
+            <h3 style="color: #333; margin: 0 0 10px 0; font-size: 14px;">Monitoring for XX:{alarm_minute:02d}</h3>
+            <button onclick="triggerAlarmUI(true)" style="padding: 5px 10px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Sound</button>
         </div>
 
-        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
-            <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
-            <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
-            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
-                🔕 Silence Current Alarm
+        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-top: 10px;">
+            <h2 style="margin: 0; font-size: 20px;">🚨 ALARM 🚨</h2>
+            <h3 style="margin: 5px 0 10px 0; font-size: 14px;">Observation Due!</h3>
+            <button onclick="silenceAlarm()" style="padding: 10px; font-size: 14px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
+                🔕 Silence
             </button>
         </div>
 
@@ -90,8 +98,6 @@ with st.sidebar:
         let activeOscillators = [];
         let alarmInterval;
         let isSilencedForThisMinute = false;
-        const originalTitle = "BHM CWO Dashboard";
-        let titleFlashInterval;
 
         function playTone(freq, type, startDelay, duration, vol) {{
             const pitchMult = {alarm_pitch} / 100.0;
@@ -167,48 +173,20 @@ with st.sidebar:
             else if (s === 15) {{ playTone(100, 'sawtooth', 0, 2.0, v); playTone(102, 'square', 0, 2.0, v*0.5); }}
         }}
 
-        // Make silence function accessible globally
         window.silenceAlarm = function() {{
             clearInterval(alarmInterval);
-            clearInterval(titleFlashInterval);
-            try {{ window.parent.document.title = originalTitle; }} catch(e) {{}}
-            
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
-            
             document.getElementById('alert-box').style.display = 'none';
             document.getElementById('idle-box').style.display = 'block';
-            
             isSilencedForThisMinute = true;
         }};
 
         function triggerAlarmUI(isTest = false) {{
-            // BREAK OUT OF IFRAME & FORCE SIDEBAR OPEN!
-            try {{
-                const parent = window.parent.document;
-                const expandBtn = parent.querySelector('[data-testid="collapsedControl"]') || 
-                                  parent.querySelector('[data-testid="stSidebarCollapsedControl"]');
-                if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
-                    expandBtn.click();
-                }}
-            }} catch(e) {{ console.log("Could not auto-expand sidebar:", e); }}
-
-            // Show the inner sidebar alert
             document.getElementById('idle-box').style.display = 'none';
             document.getElementById('alert-box').style.display = 'block';
-            
             playAlarmAudio();
-            
-            if (!isTest) {{ 
-                alarmInterval = setInterval(playAlarmAudio, 5000); 
-                try {{
-                    let flashState = false;
-                    titleFlashInterval = setInterval(() => {{
-                        window.parent.document.title = flashState ? "🚨 ALARM 🚨" : "OBSERVATION DUE!";
-                        flashState = !flashState;
-                    }}, 1000);
-                }} catch(e) {{}}
-            }}
+            if (!isTest) {{ alarmInterval = setInterval(playAlarmAudio, 5000); }}
         }}
 
         let hasTriggeredThisHour = false;
@@ -228,7 +206,7 @@ with st.sidebar:
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=200)
+        components.html(alarm_html, height=180)
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -255,11 +233,7 @@ with header_col2:
 st.divider()
 
 # --- FUNCTIONS ---
-
-NWS_HEADERS = {
-    "User-Agent": "BHM_CWO_Dashboard/2.0 (local_tactical_display)",
-    "Accept": "application/geo+json"
-}
+NWS_HEADERS = {"User-Agent": "BHM_CWO_Dashboard/2.0", "Accept": "application/geo+json"}
 
 def parse_nws_properties(props):
     timestamp = props.get('timestamp')
@@ -438,39 +412,62 @@ with top_col2:
 
 st.divider()
 
-# --- MIDDLE UI: SPECI & CLOUD CALCULATORS ---
-st.subheader("🧮 JO 7900.5E Calculators")
-calc_col1, calc_col2, calc_col3 = st.columns(3)
+# --- MIDDLE UI: SPECI, CALCULATORS, & CONTACTS ---
+st.subheader("🧮 JO 7900.5E Calculators & SOPs")
+calc_tab, cont_tab = st.tabs(["Calculators", "📞 Contacts & SOPs"])
 
-with calc_col1:
-    st.markdown("**🌫️ Visibility SPECI**")
-    old_vis = st.number_input("Prev Vis (SM)", min_value=0.0, value=10.0, step=0.25)
-    new_vis = st.number_input("Cur Vis (SM)", min_value=0.0, value=float(live_vis), step=0.25)
-    vis_speci, vis_trigger = check_speci(old_vis, new_vis, vis_thresholds)
-    if old_vis != new_vis:
-        if vis_speci: st.error(f"🚨 **SPECI REQUIRED:** Crossed {vis_trigger} SM.")
-        else: st.success("✅ No SPECI required.")
+with calc_tab:
+    calc_col1, calc_col2, calc_col3, calc_col4 = st.columns(4)
+    with calc_col1:
+        st.markdown("**🌫️ Visibility SPECI**")
+        old_vis = st.number_input("Prev Vis (SM)", min_value=0.0, value=10.0, step=0.25)
+        new_vis = st.number_input("Cur Vis (SM)", min_value=0.0, value=float(live_vis), step=0.25)
+        vis_speci, vis_trigger = check_speci(old_vis, new_vis, vis_thresholds)
+        if old_vis != new_vis:
+            if vis_speci: st.error(f"🚨 **SPECI:** Crossed {vis_trigger} SM.")
+            else: st.success("✅ No SPECI required.")
+    
+    with calc_col2:
+        st.markdown("**☁️ Ceiling SPECI**")
+        old_cig = st.number_input("Prev Ceiling (Ft)", min_value=0, value=5000, step=100)
+        new_cig = st.number_input("Cur Ceiling (Ft)", min_value=0, value=int(live_cig), step=100)
+        cig_speci, cig_trigger = check_speci(old_cig, new_cig, cig_thresholds)
+        if old_cig != new_cig:
+            if cig_speci: st.error(f"🚨 **SPECI:** Crossed {cig_trigger} FT.")
+            else: st.success("✅ No SPECI required.")
+    
+    with calc_col3:
+        st.markdown("**☁️ Convective Cloud Base**")
+        if live_temp_c is not None and live_dew_c is not None:
+            temp_c_int = round(live_temp_c)
+            dew_c_int = round(live_dew_c)
+            t_f, d_f = (temp_c_int * 9/5) + 32, (dew_c_int * 9/5) + 32
+            spread_f = t_f - d_f
+            ccl_agl = int(round((spread_f * 230) / 100.0)) * 100
+            st.info(f"**Spread:** {int(spread_f)}°F ({temp_c_int}C/{dew_c_int}C)")
+            st.success(f"**Base:** {ccl_agl} ft AGL")
+        else: st.warning("Awaiting live data...")
 
-with calc_col2:
-    st.markdown("**☁️ Ceiling SPECI**")
-    old_cig = st.number_input("Prev Ceiling (Ft)", min_value=0, value=5000, step=100)
-    new_cig = st.number_input("Cur Ceiling (Ft)", min_value=0, value=int(live_cig), step=100)
-    cig_speci, cig_trigger = check_speci(old_cig, new_cig, cig_thresholds)
-    if old_cig != new_cig:
-        if cig_speci: st.error(f"🚨 **SPECI REQUIRED:** Crossed {cig_trigger} FT.")
-        else: st.success("✅ No SPECI required.")
+    with calc_col4:
+        st.markdown("**⚡ Flash-to-Bang (Lightning)**")
+        sec_delay = st.number_input("Seconds between Flash and Thunder:", min_value=0, value=0, step=1)
+        if sec_delay > 0:
+            miles = round(sec_delay / 5.0, 1)
+            if miles <= 5: st.error(f"**{miles} Miles (TS OHD)**")
+            elif miles <= 10: st.warning(f"**{miles} Miles (TS VC)**")
+            else: st.success(f"**{miles} Miles (TS DSNT)**")
+        else:
+            st.caption("Divide seconds by 5 to get distance in miles.")
 
-with calc_col3:
-    st.markdown("**☁️ Convective Cloud Base**")
-    if live_temp_c is not None and live_dew_c is not None:
-        temp_c_int = round(live_temp_c)
-        dew_c_int = round(live_dew_c)
-        t_f, d_f = (temp_c_int * 9/5) + 32, (dew_c_int * 9/5) + 32
-        spread_f = t_f - d_f
-        ccl_agl = int(round((spread_f * 230) / 100.0)) * 100
-        st.info(f"**Live Spread:** {int(spread_f)}°F (using {temp_c_int}C/{dew_c_int}C)")
-        st.success(f"**Suggested Base:** {ccl_agl} ft AGL")
-    else: st.warning("Awaiting live Temp/Dew data...")
+with cont_tab:
+    st.markdown("### 📞 BHM Emergency Contacts & IT")
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        st.markdown("**FAA / ATC**\n* BHM ATCT CAB: `205-769-3914`\n* BHM TRACON: `205-769-3907`\n* Tech Ops: `205-769-3950`\n* NWS Office: `205-621-5650`")
+    with col_c2:
+        st.markdown("**Maintenance / IT**\n* Jeff Short (WDI): `641-923-6043`\n* BHM IT (Free WiFi): `205-599-0700`\n* Facilities (Mathew): `205-595-0595`\n* BHM Voice: `205-591-6172`")
+    with col_c3:
+        st.markdown("**ASOS OUTAGES**\n* AOMC: `1-800-242-8194` or `8895`\n* NEMC (Comms): `1-855-322-6362` *(-> ATL -> #3)*\n* ARTCC Longline: `1-770-210-7960` *(Cell phone only)*")
 
 st.divider()
 
@@ -588,7 +585,6 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
 
         if "pdf_page" in st.session_state and 0 <= st.session_state.pdf_page < total_pages:
             st.markdown("---")
-            
             col_p1, col_p2, col_p3 = st.columns([1, 2, 1])
             
             with col_p1:
