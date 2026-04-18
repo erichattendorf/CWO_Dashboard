@@ -4,7 +4,6 @@ import re
 from datetime import datetime, timezone, timedelta
 import os
 import PyPDF2
-import base64
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
@@ -235,9 +234,9 @@ with top_col1:
         if st.button("Fetch Fresh Regional Data"):
             with st.spinner("Pulling regional observations..."):
                 reg_data = get_regional_5min()
-                for stn, obs_list in reg_data.items():
+                for stn, reg_obs_list in reg_data.items():
                     st.markdown(f"**{stn}**")
-                    for ob in obs_list:
+                    for ob in reg_obs_list:
                         st.caption(f"`{ob}`")
 
 with top_col2:
@@ -403,22 +402,21 @@ st.divider()
 st.subheader("📚 JO 7900.5E Reference Manual")
 st.markdown("Search the official FAA Surface Weather Observing manual instantly, or view it directly.")
 
-if os.path.exists("Order_JO_7900.5E.pdf"):
-    with open("Order_JO_7900.5E.pdf", "rb") as pdf_file:
-        PDFbyte = pdf_file.read()
-    base64_pdf = base64.b64encode(PDFbyte).decode('utf-8')
+# Bypass base64 limits completely by telling the browser to fetch the PDF directly from GitHub
+pdf_url = "https://cdn.jsdelivr.net/gh/erichattendorf/CWO_Dashboard@main/Order_JO_7900.5E.pdf"
 
-    # View the full manual without downloading it
-    with st.expander("📖 Click Here to Open Full JO 7900.5E Manual (No Download)"):
-        pdf_display_full = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page=1" width="100%" height="800" type="application/pdf"></iframe>'
-        st.markdown(pdf_display_full, unsafe_allow_html=True)
+with st.expander("📖 Click Here to Browse the Full JO 7900.5E Manual"):
+    # This embeds the raw PDF URL directly so the browser native viewer kicks in
+    st.markdown(f'<iframe src="{pdf_url}" width="100%" height="800" type="application/pdf"></iframe>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
+st.markdown("---")
+search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
 
-    if search_query:
+if search_query:
+    if os.path.exists("Order_JO_7900.5E.pdf"):
         with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
             try:
+                # We still use PyPDF2 just to find WHICH page the keyword is on
                 reader = PyPDF2.PdfReader("Order_JO_7900.5E.pdf")
                 results = []
                 for i, page in enumerate(reader.pages):
@@ -439,12 +437,12 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                     
                     if selected_match:
                         target_page = match_dict[selected_match]
-                        # Render the PDF viewer iframe and automatically scroll to the target page!
-                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page={target_page}" width="100%" height="800" type="application/pdf"></iframe>'
+                        # Use the CDN link but append #page=X to jump straight to the exact page inside the viewer
+                        pdf_display = f'<iframe src="{pdf_url}#page={target_page}" width="100%" height="800" type="application/pdf"></iframe>'
                         st.markdown(pdf_display, unsafe_allow_html=True)
                 else:
                     st.warning("No results found in the manual.")
             except Exception as e:
                 st.error(f"Error reading PDF. ({e})")
-else:
-    st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
+    else:
+        st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
