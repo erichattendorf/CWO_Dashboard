@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 import os
 import time
+import PyPDF2
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
@@ -13,19 +14,18 @@ header_col1, header_col2 = st.columns([5, 1])
 
 with header_col1:
     st.title("BHM CWO Tactical Dashboard 🌪️")
-    st.subheader("JO 7900.5F Logic Engine & Live Interface")
+    st.subheader("JO 7900.5E Logic Engine & Live Interface")
 
 with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
-        # Fixed Capitalization for Linux/GitHub Servers
-        if os.path.exists("NOAA.png"):
-            st.image("NOAA.png", width=75)
+        # Swapped the NOAA logo for your custom Cat and Hat picture!
+        if os.path.exists("Cat and Hat.jpg"):
+            st.image("Cat and Hat.jpg", width=80)
         else:
-            st.caption("[NOAA Logo]")
+            st.caption("[Cat & Hat Missing]")
     with logo2:
-        # Fixed Capitalization for Linux/GitHub Servers
         if os.path.exists("NWS.png"):
             st.image("NWS.png", width=75)
         else:
@@ -44,8 +44,7 @@ def get_5min_asos():
             "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 CB/{current_time}",
             "Accept": "application/geo+json",
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
+            "Pragma": "no-cache"
         }
         response = requests.get(url, headers=headers, timeout=5)
         
@@ -75,10 +74,8 @@ def get_5min_asos():
                     
                     vis_m = props.get('visibility', {}).get('value')
                     vis_sm = round(vis_m / 1609.34, 1) if vis_m is not None else "M"
-                    
                     temp_str = f"{int(temp_c)}" if temp_c is not None else "M"
                     dew_str = f"{int(dew_c)}" if dew_c is not None else "M"
-                    
                     pres_pa = props.get('barometricPressure', {}).get('value')
                     pres_inhg = round(pres_pa / 3386.389, 2) if pres_pa is not None else "M"
                     
@@ -92,24 +89,53 @@ def get_5min_asos():
     except Exception as e:
         return None, None, None, None, f"Error: {str(e)}"
 
-def get_awc_data(station_ids="KBHM", hours=6):
-    """Fetches the hourly METARs from the reliable AWC API for any given stations."""
+def get_regional_5min():
+    """Pulls the last hour (12 obs) of 5-min data for regional stations."""
+    stations = ["KTCL", "KANB", "KEET", "KPLR"]
+    data = {}
+    current_time = int(time.time())
+    for stn in stations:
+        try:
+            url = f"https://api.weather.gov/stations/{stn}/observations?limit=12"
+            headers = {
+                "User-Agent": f"Mozilla/5.0 CB/{current_time}",
+                "Accept": "application/geo+json"
+            }
+            res = requests.get(url, headers=headers, timeout=4)
+            if res.status_code == 200:
+                features = res.json().get('features', [])
+                parsed = []
+                for ob in features:
+                    props = ob['properties']
+                    ts = props.get('timestamp')
+                    raw = props.get('rawMessage')
+                    if ts:
+                        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                        t_str = dt.strftime("%H:%MZ")
+                        if not raw:
+                            temp = props.get('temperature', {}).get('value')
+                            temp_s = f"{int(temp)}C" if temp is not None else "M"
+                            parsed.append(f"{t_str} | [Raw Suppressed by NWS] Temp: {temp_s}")
+                        else:
+                            parsed.append(f"{t_str} | {raw}")
+                data[stn] = parsed
+            else:
+                data[stn] = [f"API Error: HTTP {res.status_code}"]
+        except Exception as e:
+            data[stn] = ["Connection Error"]
+    return data
+
+def get_awc_data():
     try:
-        url = f"https://aviationweather.gov/api/data/metar?ids={station_ids}&format=json&hours={hours}"
+        url = "https://aviationweather.gov/api/data/metar?ids=KBHM&format=json&hours=6"
         response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            return response.json()
+        if response.status_code == 200: return response.json()
         return None
-    except:
-        return None
+    except: return None
 
 def extract_vis_and_cig(metar_string):
-    """Parses raw METAR string to find Visibility and Ceiling."""
-    vis_val = 10.0
-    cig_val = 10000 
-    if "Error" in metar_string or "No recent" in metar_string or not metar_string:
-        return vis_val, cig_val
-
+    vis_val, cig_val = 10.0, 10000 
+    if "Error" in metar_string or "No recent" in metar_string or not metar_string: return vis_val, cig_val
     vis_match = re.search(r'\s(M?P?\d+/?\d*\s?\d*/?\d*)SM', metar_string)
     if vis_match:
         vis_str = vis_match.group(1).replace('P', '').replace('M', '').strip()
@@ -123,26 +149,20 @@ def extract_vis_and_cig(metar_string):
                 vis_val = float(num) / float(den)
             else:
                 vis_val = float(vis_str)
-        except:
-            pass 
-
+        except: pass 
     cig_match = re.search(r'(BKN|OVC|VV)(\d{3})', metar_string)
-    if cig_match:
-        cig_val = int(cig_match.group(2)) * 100
-
+    if cig_match: cig_val = int(cig_match.group(2)) * 100
     return vis_val, cig_val
 
 def check_speci(old_val, new_val, thresholds):
-    """Checks if a value crossed any JO 7900.5F threshold."""
     for t in thresholds:
-        if (old_val >= t and new_val < t) or (old_val < t and new_val >= t):
-            return True, t
+        if (old_val >= t and new_val < t) or (old_val < t and new_val >= t): return True, t
     return False, None
 
 vis_thresholds = [3.0, 2.0, 1.0, 0.5, 0.25]
 cig_thresholds = [3000, 1500, 1000, 500, 200]
 
-# --- COMM CHECK UI (5-Minute Early Warning) ---
+# --- COMM CHECK UI ---
 st.markdown("### 📡 System Comm Status (5-Min Early Warning)")
 latest_raw, latest_ts, live_temp_c, live_dew_c, diag_err = get_5min_asos()
 
@@ -153,17 +173,12 @@ if latest_raw and latest_ts:
         age_minutes = (now - ob_time).total_seconds() / 60
 
         col_a, col_b = st.columns([2, 1])
-        with col_a:
-            st.code(f"ASOS 5-MIN PING: {latest_raw}", language="bash")
+        with col_a: st.code(f"ASOS 5-MIN PING: {latest_raw}", language="bash")
         with col_b:
-            if age_minutes > 20:
-                st.error(f"🚨 **COMM WARNING:** Last ASOS ping is **{int(age_minutes)} minutes old!** Check long-line.")
-            else:
-                st.success(f"✅ **Comms Good:** Latency is **{int(age_minutes)}** mins.")
-    except Exception as e:
-        st.warning("Could not calculate age.")
-else:
-    st.warning(f"⚠️ 5-minute network ping unavailable. Diagnostic code: {diag_err}")
+            if age_minutes > 20: st.error(f"🚨 **COMM WARNING:** Ping is **{int(age_minutes)} mins old!** Check long-line.")
+            else: st.success(f"✅ **Comms Good:** Latency is **{int(age_minutes)}** mins.")
+    except Exception as e: st.warning("Could not calculate age.")
+else: st.warning(f"⚠️ 5-minute network ping unavailable. Diagnostic code: {diag_err}")
 
 st.divider()
 
@@ -171,52 +186,30 @@ st.divider()
 top_col1, top_col2 = st.columns([1, 1])
 
 with top_col1:
-    # Set up tabs for Local vs Regional data
-    tab_local, tab_regional = st.tabs(["📍 KBHM Transmitted", "🌍 Regional (50-mi SA)"])
+    tab_local, tab_regional = st.tabs(["📍 KBHM Transmitted", "🌍 Regional 5-Min (50-mi)"])
     
     with tab_local:
-        awc_data = get_awc_data(station_ids="KBHM", hours=6)
-        if awc_data:
-            recent_metars = [obs.get('rawOb', 'No raw string') for obs in awc_data[:6]]
-        else:
-            recent_metars = ["No recent METARs found."]
-
+        awc_data = get_awc_data()
+        recent_metars = [obs.get('rawOb', 'No raw string') for obs in awc_data[:6]] if awc_data else ["No recent METARs found."]
         latest_metar = recent_metars[0] if len(recent_metars) > 0 else ""
         live_vis, live_cig = extract_vis_and_cig(latest_metar)
         
         if "No recent" not in latest_metar:
             for i, metar in enumerate(recent_metars):
-                if i == 0:
-                    st.error(f"**LATEST:** `{metar}`")
-                elif i == 1:
-                    st.warning(f"`{metar}`")
-                else:
-                    st.info(f"`{metar}`")
-        else:
-            st.warning("Could not load AWC METARs.")
+                if i == 0: st.error(f"**LATEST:** `{metar}`")
+                elif i == 1: st.warning(f"`{metar}`")
+                else: st.info(f"`{metar}`")
+        else: st.warning("Could not load AWC METARs.")
 
     with tab_regional:
-        st.markdown("**Last Hour Observations for KTCL, KANB, KEET, KPLR**")
-        # Pull the last 2 hours of data for surrounding stations
-        regional_data = get_awc_data(station_ids="KTCL,KANB,KEET,KPLR", hours=2)
-        if regional_data:
-            # Sort observations by station
-            stations = {}
-            for obs in regional_data:
-                icao = obs.get('icaoId', 'UNKNOWN')
-                if icao not in stations:
-                    stations[icao] = []
-                # Only grab the newest 2 obs per station to save space
-                if len(stations[icao]) < 2:
-                    stations[icao].append(obs.get('rawOb'))
-            
-            # Display them
-            for icao, obs_list in stations.items():
-                st.markdown(f"**{icao}**")
-                for ob in obs_list:
-                    st.caption(f"`{ob}`")
-        else:
-            st.warning("Could not pull regional data.")
+        st.markdown("**Last Hour of 5-Minute ASOS Data** (KTCL, KANB, KEET, KPLR)")
+        if st.button("Fetch Fresh Regional Data"):
+            with st.spinner("Pulling 48 regional observations..."):
+                reg_data = get_regional_5min()
+                for stn, obs_list in reg_data.items():
+                    st.markdown(f"**{stn}**")
+                    for ob in obs_list:
+                        st.caption(f"`{ob}`")
 
 with top_col2:
     st.markdown("#### 📡 Live Radar (KBMX)")
@@ -225,14 +218,14 @@ with top_col2:
 st.divider()
 
 # --- MIDDLE UI: SPECI & CLOUD CALCULATORS ---
-st.subheader("🧮 JO 7900.5F Calculators")
+st.subheader("🧮 JO 7900.5E Calculators")
 
 calc_col1, calc_col2, calc_col3 = st.columns(3)
 
 with calc_col1:
     st.markdown("**🌫️ Visibility SPECI**")
-    old_vis = st.number_input("Previous Visibility (SM)", min_value=0.0, value=10.0, step=0.25)
-    new_vis = st.number_input("Current Visibility (SM)", min_value=0.0, value=float(live_vis), step=0.25)
+    old_vis = st.number_input("Prev Vis (SM)", min_value=0.0, value=10.0, step=0.25)
+    new_vis = st.number_input("Cur Vis (SM)", min_value=0.0, value=float(live_vis), step=0.25)
     vis_speci, vis_trigger = check_speci(old_vis, new_vis, vis_thresholds)
     if old_vis != new_vis:
         if vis_speci: st.error(f"🚨 **SPECI REQUIRED:** Crossed {vis_trigger} SM.")
@@ -240,8 +233,8 @@ with calc_col1:
 
 with calc_col2:
     st.markdown("**☁️ Ceiling SPECI**")
-    old_cig = st.number_input("Previous Ceiling (Feet)", min_value=0, value=5000, step=100)
-    new_cig = st.number_input("Current Ceiling (Feet)", min_value=0, value=int(live_cig), step=100)
+    old_cig = st.number_input("Prev Ceiling (Ft)", min_value=0, value=5000, step=100)
+    new_cig = st.number_input("Cur Ceiling (Ft)", min_value=0, value=int(live_cig), step=100)
     cig_speci, cig_trigger = check_speci(old_cig, new_cig, cig_thresholds)
     if old_cig != new_cig:
         if cig_speci: st.error(f"🚨 **SPECI REQUIRED:** Crossed {cig_trigger} FT.")
@@ -249,18 +242,14 @@ with calc_col2:
 
 with calc_col3:
     st.markdown("**☁️ Convective Cloud Base**")
-    st.caption("Based on 5-Min ASOS Temp/Dew Spread")
-    
     if live_temp_c is not None and live_dew_c is not None:
         t_f = (live_temp_c * 9/5) + 32
         d_f = (live_dew_c * 9/5) + 32
         spread_f = t_f - d_f
         ccl_agl = int(spread_f * 230)
-        
         st.info(f"**Live Spread:** {int(spread_f)}°F")
         st.success(f"**Suggested Base:** {ccl_agl} ft AGL")
-    else:
-        st.warning("Awaiting live Temp/Dew data...")
+    else: st.warning("Awaiting live Temp/Dew data...")
 
 st.divider()
 
@@ -374,7 +363,42 @@ for key in sorted(rmks.keys()):
         final_remarks.append(rmks[key])
 
 if final_remarks:
-    st.success("**Final JO 7900.5F Remark String (Correct Order):**")
+    st.success("**Final JO 7900.5E Remark String (Correct Order):**")
     st.code("RMK " + " ".join(final_remarks), language="markdown")
 else:
     st.info("Select weather events in the tabs above to build your remarks string.")
+
+st.divider()
+
+# --- PDF SEARCH ENGINE ---
+st.subheader("📚 JO 7900.5E Reference Manual Search")
+st.markdown("Search the official FAA Surface Weather Observing manual instantly.")
+
+search_query = st.text_input("Enter keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
+
+if search_query:
+    if os.path.exists("Order_JO_7900.5E.pdf"):
+        with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
+            try:
+                with open("Order_JO_7900.5E.pdf", "rb") as f:
+                    reader = PyPDF2.PdfReader(f)
+                    results = []
+                    for i, page in enumerate(reader.pages):
+                        text = page.extract_text()
+                        if text and search_query.lower() in text.lower():
+                            idx = text.lower().find(search_query.lower())
+                            start = max(0, idx - 80)
+                            end = min(len(text), idx + 80)
+                            snippet = text[start:end].replace('\n', ' ')
+                            results.append((i+1, snippet))
+                
+                if results:
+                    st.success(f"✅ Found {len(results)} matching pages in the JO 7900.5E!")
+                    for page_num, snippet in results:
+                        st.markdown(f"**Page {page_num}:** `...{snippet}...`")
+                else:
+                    st.warning("No results found in the manual.")
+            except Exception as e:
+                st.error(f"Error reading PDF. Are you sure it isn't corrupted? ({e})")
+    else:
+        st.error("⚠️ `Order_JO_7900.5E.pdf` not found. Please upload it to your GitHub repository in the exact same folder as the app!")
