@@ -33,6 +33,11 @@ st.divider()
 
 # --- FUNCTIONS ---
 
+NWS_HEADERS = {
+    "User-Agent": "BHM_CWO_Dashboard/2.0 (local_tactical_display)",
+    "Accept": "application/geo+json"
+}
+
 def parse_nws_properties(props):
     """Helper function to turn NWS raw variables into a readable string."""
     timestamp = props.get('timestamp')
@@ -56,30 +61,46 @@ def parse_nws_properties(props):
     vis_m = props.get('visibility', {}).get('value')
     vis_sm = round(vis_m / 1609.34, 1) if vis_m is not None else "M"
     
+    # --- NEW CLOUD LAYER PARSING ---
+    clouds_str = ""
+    cloud_layers = props.get('cloudLayers') or []
+    if cloud_layers:
+        layer_strs = []
+        for layer in cloud_layers:
+            amt = layer.get('amount', '---')
+            base_dict = layer.get('base')
+            base_m = base_dict.get('value') if isinstance(base_dict, dict) else None
+            
+            if base_m is not None:
+                # Convert meters to feet, then divide by 100 for standard METAR format
+                base_ft = base_m * 3.28084
+                base_hnds = int(round(base_ft / 100))
+                layer_strs.append(f"{amt}{base_hnds:03d}")
+            else:
+                layer_strs.append(amt)
+        clouds_str = " ".join(layer_strs)
+        
+    if not clouds_str:
+        desc = props.get('textDescription', '')
+        if desc and "Clear" in desc: 
+            clouds_str = "CLR"
+        else: 
+            clouds_str = "M"
+            
     temp_str = f"{int(temp_c)}" if temp_c is not None else "M"
     dew_str = f"{int(dew_c)}" if dew_c is not None else "M"
     
     pres_pa = props.get('barometricPressure', {}).get('value')
     pres_inhg = round(pres_pa / 3386.389, 2) if pres_pa is not None else "M"
     
-    formatted_str = f"({time_str}) | Wind: {wind_str} | Vis: {vis_sm}SM | Temp/Dew: {temp_str}/{dew_str}°C | Alt: {pres_inhg} inHg"
+    formatted_str = f"({time_str}) | Wind: {wind_str} | Vis: {vis_sm}SM | Sky: {clouds_str} | Temp/Dew: {temp_str}/{dew_str}°C | Alt: {pres_inhg} inHg"
     return formatted_str, timestamp, temp_c, dew_c
 
-
 def get_5min_asos():
-    """Pulls high-frequency 5-minute ASOS data using a Dynamic Time-Window Cache Buster."""
+    """Pulls high-frequency 5-minute ASOS data using an NWS-compliant method."""
     try:
-        # CACHE BUSTER: We ask for data starting exactly 2 hours ago down to the current second. 
-        # Because the timestamp changes every second, it forces the NWS server to bypass the cache!
-        now = datetime.now(timezone.utc)
-        start_time = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        
-        url = f"https://api.weather.gov/stations/KBHM/observations?start={start_time}"
-        headers = {
-            "User-Agent": "BHM_CWO_Dashboard/1.0",
-            "Accept": "application/geo+json"
-        }
-        response = requests.get(url, headers=headers, timeout=5)
+        url = "https://api.weather.gov/stations/KBHM/observations?limit=10"
+        response = requests.get(url, headers=NWS_HEADERS, timeout=5)
         
         if response.status_code == 200:
             features = response.json().get('features', [])
@@ -107,20 +128,15 @@ def get_regional_5min():
     stations = ["KTCL", "KANB", "KEET", "KPLR"]
     data = {}
     
-    now = datetime.now(timezone.utc)
-    start_time = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    
     for stn in stations:
         try:
-            url = f"https://api.weather.gov/stations/{stn}/observations?start={start_time}"
-            headers = {"User-Agent": "BHM_CWO_Dashboard/1.0", "Accept": "application/geo+json"}
-            res = requests.get(url, headers=headers, timeout=5)
+            url = f"https://api.weather.gov/stations/{stn}/observations?limit=6"
+            res = requests.get(url, headers=NWS_HEADERS, timeout=5)
             
             if res.status_code == 200:
                 features = res.json().get('features', [])
                 parsed = []
-                # Only take the 6 most recent pings per station
-                for ob in features[:6]:
+                for ob in features:
                     props = ob['properties']
                     raw = props.get('rawMessage')
                     formatted_str, ts, _, _ = parse_nws_properties(props)
@@ -216,7 +232,7 @@ with top_col1:
     with tab_regional:
         st.markdown("**Last Hour of 5-Minute ASOS Data**")
         if st.button("Fetch Fresh Regional Data"):
-            with st.spinner("Bypassing NWS cache & pulling regional observations..."):
+            with st.spinner("Pulling regional observations..."):
                 reg_data = get_regional_5min()
                 for stn, obs_list in reg_data.items():
                     st.markdown(f"**{stn}**")
