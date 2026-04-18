@@ -10,7 +10,8 @@ import PyPDF2
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
 
 # --- HEADER WITH LOGOS ---
-header_col1, header_col2 = st.columns([5, 1])
+# Adjusted the column ratio from [5,1] to [4,2] to give the images much more room
+header_col1, header_col2 = st.columns([4, 2])
 
 with header_col1:
     st.title("BHM CWO Tactical Dashboard 🌪️")
@@ -20,14 +21,15 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
-        # Swapped the NOAA logo for your custom Cat and Hat picture!
+        # Cranked the width up to 180 to make the Cat much more visible!
         if os.path.exists("Cat and Hat.jpg"):
-            st.image("Cat and Hat.jpg", width=80)
+            st.image("Cat and Hat.jpg", width=180)
         else:
             st.caption("[Cat & Hat Missing]")
     with logo2:
+        # Bumped the NWS logo slightly to match the new size ratio
         if os.path.exists("NWS.png"):
-            st.image("NWS.png", width=75)
+            st.image("NWS.png", width=100)
         else:
             st.caption("[NWS Logo]")
 
@@ -390,12 +392,15 @@ if search_query:
                             start = max(0, idx - 80)
                             end = min(len(text), idx + 80)
                             snippet = text[start:end].replace('\n', ' ')
-                            results.append((i+1, snippet))
+                            # Save the full text for the expander dropdown
+                            results.append((i+1, snippet, text))
                 
                 if results:
                     st.success(f"✅ Found {len(results)} matching pages in the JO 7900.5E!")
-                    for page_num, snippet in results:
-                        st.markdown(f"**Page {page_num}:** `...{snippet}...`")
+                    for page_num, snippet, full_text in results:
+                        # Use an expander dropdown to show the full page text!
+                        with st.expander(f"📄 **Page {page_num}:** `...{snippet}...`"):
+                            st.text(full_text)
                 else:
                     st.warning("No results found in the manual.")
             except Exception as e:
