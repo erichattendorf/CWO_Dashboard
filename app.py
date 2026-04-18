@@ -19,13 +19,15 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     logo1, logo2 = st.columns(2)
     with logo1:
-        if os.path.exists("noaa.png"):
-            st.image("noaa.png", width=75)
+        # Fixed Capitalization for Linux/GitHub Servers
+        if os.path.exists("NOAA.png"):
+            st.image("NOAA.png", width=75)
         else:
             st.caption("[NOAA Logo]")
     with logo2:
-        if os.path.exists("nws.png"):
-            st.image("nws.png", width=75)
+        # Fixed Capitalization for Linux/GitHub Servers
+        if os.path.exists("NWS.png"):
+            st.image("NWS.png", width=75)
         else:
             st.caption("[NWS Logo]")
 
@@ -36,11 +38,7 @@ st.divider()
 def get_5min_asos():
     """Pulls high-frequency 5-minute ASOS data using a hidden Cache-Buster."""
     try:
-        # Reverted to the strict API URL so we don't trigger the 400 Bad Request
         url = "https://api.weather.gov/stations/KBHM/observations?limit=3"
-        
-        # CACHE BUSTER: We hide the changing timestamp inside the User-Agent string. 
-        # The firewall sees a "new" visitor every time and hands over fresh data.
         current_time = int(time.time())
         headers = {
             "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 CB/{current_time}",
@@ -94,10 +92,10 @@ def get_5min_asos():
     except Exception as e:
         return None, None, None, None, f"Error: {str(e)}"
 
-def get_awc_data():
-    """Fetches the hourly METARs from the reliable AWC API."""
+def get_awc_data(station_ids="KBHM", hours=6):
+    """Fetches the hourly METARs from the reliable AWC API for any given stations."""
     try:
-        url = "https://aviationweather.gov/api/data/metar?ids=KBHM&format=json&hours=6"
+        url = f"https://aviationweather.gov/api/data/metar?ids={station_ids}&format=json&hours={hours}"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             return response.json()
@@ -169,31 +167,56 @@ else:
 
 st.divider()
 
-# --- PREPARE THE HOURLY METAR LIST ---
-awc_data = get_awc_data()
-if awc_data:
-    recent_metars = [obs.get('rawOb', 'No raw string') for obs in awc_data[:6]]
-else:
-    recent_metars = ["No recent METARs found."]
-
-latest_metar = recent_metars[0] if len(recent_metars) > 0 else ""
-live_vis, live_cig = extract_vis_and_cig(latest_metar)
-
 # --- TOP UI: OBSERVATIONS & RADAR ---
 top_col1, top_col2 = st.columns([1, 1])
 
 with top_col1:
-    st.markdown("#### 📝 Last 6 Transmitted METARs")
-    if "No recent" not in latest_metar:
-        for i, metar in enumerate(recent_metars):
-            if i == 0:
-                st.error(f"**LATEST:** `{metar}`")
-            elif i == 1:
-                st.warning(f"`{metar}`")
-            else:
-                st.info(f"`{metar}`")
-    else:
-        st.warning("Could not load AWC METARs.")
+    # Set up tabs for Local vs Regional data
+    tab_local, tab_regional = st.tabs(["📍 KBHM Transmitted", "🌍 Regional (50-mi SA)"])
+    
+    with tab_local:
+        awc_data = get_awc_data(station_ids="KBHM", hours=6)
+        if awc_data:
+            recent_metars = [obs.get('rawOb', 'No raw string') for obs in awc_data[:6]]
+        else:
+            recent_metars = ["No recent METARs found."]
+
+        latest_metar = recent_metars[0] if len(recent_metars) > 0 else ""
+        live_vis, live_cig = extract_vis_and_cig(latest_metar)
+        
+        if "No recent" not in latest_metar:
+            for i, metar in enumerate(recent_metars):
+                if i == 0:
+                    st.error(f"**LATEST:** `{metar}`")
+                elif i == 1:
+                    st.warning(f"`{metar}`")
+                else:
+                    st.info(f"`{metar}`")
+        else:
+            st.warning("Could not load AWC METARs.")
+
+    with tab_regional:
+        st.markdown("**Last Hour Observations for KTCL, KANB, KEET, KPLR**")
+        # Pull the last 2 hours of data for surrounding stations
+        regional_data = get_awc_data(station_ids="KTCL,KANB,KEET,KPLR", hours=2)
+        if regional_data:
+            # Sort observations by station
+            stations = {}
+            for obs in regional_data:
+                icao = obs.get('icaoId', 'UNKNOWN')
+                if icao not in stations:
+                    stations[icao] = []
+                # Only grab the newest 2 obs per station to save space
+                if len(stations[icao]) < 2:
+                    stations[icao].append(obs.get('rawOb'))
+            
+            # Display them
+            for icao, obs_list in stations.items():
+                st.markdown(f"**{icao}**")
+                for ob in obs_list:
+                    st.caption(f"`{ob}`")
+        else:
+            st.warning("Could not pull regional data.")
 
 with top_col2:
     st.markdown("#### 📡 Live Radar (KBMX)")
