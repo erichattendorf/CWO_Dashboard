@@ -3,19 +3,47 @@ import streamlit.components.v1 as components
 import requests
 import re
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo # Built-in Python tool! No requirements.txt update needed.
 import os
-import fitz  
-import pytz # New tool to accurately track Central Time for the Shift Checklist
+import fitz  # PyMuPDF for high-res PDF rendering
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# --- INITIALIZE SESSION STATE ---
+# --- CSS HACK: TURN THE SIDEBAR ARROW INTO A GIANT "ALERTS" BUTTON ---
+st.markdown("""
+<style>
+    [data-testid="collapsedControl"] {
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 0 8px 8px 0 !important;
+        padding: 5px 15px 5px 10px !important;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.3) !important;
+        width: auto !important;
+        transition: 0.2s !important;
+    }
+    [data-testid="collapsedControl"]::after {
+        content: " 🚨 ALERTS";
+        font-family: sans-serif;
+        font-weight: bold;
+        font-size: 16px;
+        margin-left: 5px;
+    }
+    [data-testid="collapsedControl"]:hover {
+        background-color: #cc0000 !important;
+    }
+    [data-testid="collapsedControl"] title {
+        display: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- INITIALIZE SESSION STATE FOR PDF VIEWER ---
 if "pdf_page" not in st.session_state:
     st.session_state.pdf_page = 0
 
 # Determine Current Shift (Central Time)
-bhm_tz = pytz.timezone("America/Chicago")
+bhm_tz = ZoneInfo("America/Chicago")
 now_ct = datetime.now(bhm_tz)
 hour = now_ct.hour
 
@@ -58,7 +86,10 @@ with st.sidebar:
     st.divider()
     
     st.title("⏰ METAR Alerts")
-    alarm_enabled = st.toggle("Enable Audio Alert", value=False)
+    st.markdown("Audio/Visual warnings before the XX:53 observation.")
+    
+    # DEFAULTED TO OFF!
+    alarm_enabled = st.toggle("Enable Alerts", value=False)
     
     if alarm_enabled:
         alarm_minute = st.number_input("Trigger at XX past hour:", min_value=0, max_value=59, value=48, step=1)
@@ -74,21 +105,24 @@ with st.sidebar:
         sound_id = int(alarm_sound.split(".")[0])
         
         col_v1, col_v2 = st.columns(2)
-        with col_v1: alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
-        with col_v2: alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
+        with col_v1:
+            alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
+        with col_v2:
+            alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # Alarm UI completely contained inside the sidebar
+        # Cleaned up JavaScript to auto-expand the sidebar WITHOUT full screen pop-ups
         alarm_html = f"""
-        <div id="idle-box" style="text-align:center; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
-            <h3 style="color: #333; margin: 0 0 10px 0; font-size: 14px;">Monitoring for XX:{alarm_minute:02d}</h3>
-            <button onclick="triggerAlarmUI(true)" style="padding: 5px 10px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Sound</button>
+        <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
+            <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
+            <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
+            <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
         </div>
 
-        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-top: 10px;">
-            <h2 style="margin: 0; font-size: 20px;">🚨 ALARM 🚨</h2>
-            <h3 style="margin: 5px 0 10px 0; font-size: 14px;">Observation Due!</h3>
-            <button onclick="silenceAlarm()" style="padding: 10px; font-size: 14px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
-                🔕 Silence
+        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
+            <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
+            <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
+            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
+                🔕 Silence Current Alarm
             </button>
         </div>
 
@@ -98,6 +132,8 @@ with st.sidebar:
         let activeOscillators = [];
         let alarmInterval;
         let isSilencedForThisMinute = false;
+        const originalTitle = "BHM CWO Dashboard";
+        let titleFlashInterval;
 
         function playTone(freq, type, startDelay, duration, vol) {{
             const pitchMult = {alarm_pitch} / 100.0;
@@ -175,6 +211,9 @@ with st.sidebar:
 
         window.silenceAlarm = function() {{
             clearInterval(alarmInterval);
+            clearInterval(titleFlashInterval);
+            try {{ window.parent.document.title = originalTitle; }} catch(e) {{}}
+            
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
             document.getElementById('alert-box').style.display = 'none';
@@ -183,10 +222,29 @@ with st.sidebar:
         }};
 
         function triggerAlarmUI(isTest = false) {{
+            // Attempt to force Streamlit Sidebar open
+            try {{
+                const parent = window.parent.document;
+                const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
+                if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
+                    expandBtn.click();
+                }}
+            }} catch(e) {{}}
+
             document.getElementById('idle-box').style.display = 'none';
             document.getElementById('alert-box').style.display = 'block';
             playAlarmAudio();
-            if (!isTest) {{ alarmInterval = setInterval(playAlarmAudio, 5000); }}
+            
+            if (!isTest) {{ 
+                alarmInterval = setInterval(playAlarmAudio, 5000); 
+                try {{
+                    let flashState = false;
+                    titleFlashInterval = setInterval(() => {{
+                        window.parent.document.title = flashState ? "🚨 ALARM 🚨" : "OBSERVATION DUE!";
+                        flashState = !flashState;
+                    }}, 1000);
+                }} catch(e) {{}}
+            }}
         }}
 
         let hasTriggeredThisHour = false;
