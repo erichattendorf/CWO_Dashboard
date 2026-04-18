@@ -12,7 +12,6 @@ st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sideba
 # --- CSS HACK: TURN THE SIDEBAR ARROW INTO A GIANT "ALERTS" BUTTON ---
 st.markdown("""
 <style>
-    /* Hijack the hidden sidebar toggle button and make it huge and red */
     [data-testid="collapsedControl"] {
         background-color: #ff4b4b !important;
         color: white !important;
@@ -22,7 +21,6 @@ st.markdown("""
         width: auto !important;
         transition: 0.2s !important;
     }
-    /* Add the word "ALERTS" right next to the arrow */
     [data-testid="collapsedControl"]::after {
         content: " 🚨 ALERTS";
         font-family: sans-serif;
@@ -33,7 +31,6 @@ st.markdown("""
     [data-testid="collapsedControl"]:hover {
         background-color: #cc0000 !important;
     }
-    /* Hide the tooltip that pops up over it */
     [data-testid="collapsedControl"] title {
         display: none !important;
     }
@@ -49,7 +46,8 @@ with st.sidebar:
     st.title("🚨 ALERTS")
     st.markdown("Audio/Visual warnings before the XX:53 observation.")
     
-    alarm_enabled = st.toggle("Enable Alerts", value=True)
+    # DEFAULTED TO OFF!
+    alarm_enabled = st.toggle("Enable Alerts", value=False)
     
     if alarm_enabled:
         alarm_minute = st.number_input("Trigger at XX past hour:", min_value=0, max_value=59, value=48, step=1)
@@ -70,7 +68,7 @@ with st.sidebar:
         with col_v2:
             alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # JavaScript to Sound the Alarm and create a Highly Visible Popup Alert Box
+        # Cleaned up JavaScript to auto-expand the sidebar WITHOUT full screen pop-ups
         alarm_html = f"""
         <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
@@ -181,61 +179,24 @@ with st.sidebar:
             document.getElementById('alert-box').style.display = 'none';
             document.getElementById('idle-box').style.display = 'block';
             
-            try {{
-                let floatBtn = window.parent.document.getElementById('floating-alert-box');
-                if (floatBtn) floatBtn.style.display = "none";
-            }} catch(e) {{}}
-            
             isSilencedForThisMinute = true;
         }};
 
         function triggerAlarmUI(isTest = false) {{
-            // 1. Aggressive attempt to force Streamlit Sidebar open (Bypassing Streamlit Cloud Iframes)
+            // BREAK OUT OF IFRAME & FORCE SIDEBAR OPEN!
             try {{
                 const parent = window.parent.document;
-                const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
+                const expandBtn = parent.querySelector('[data-testid="collapsedControl"]') || 
+                                  parent.querySelector('[data-testid="stSidebarCollapsedControl"]');
                 if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
                     expandBtn.click();
                 }}
-            }} catch(e) {{}}
+            }} catch(e) {{ console.log("Could not auto-expand sidebar:", e); }}
 
-            // 2. Show the inner sidebar alert
+            // Show the inner sidebar alert
             document.getElementById('idle-box').style.display = 'none';
             document.getElementById('alert-box').style.display = 'block';
             
-            // 3. Create Backup Floating Button just in case browser blocks the sidebar from opening
-            try {{
-                const parentDoc = window.parent.document;
-                let floatBox = parentDoc.getElementById('floating-alert-box');
-                if (!floatBox) {{
-                    floatBox = parentDoc.createElement("div");
-                    floatBox.id = "floating-alert-box";
-                    floatBox.style.position = "fixed";
-                    floatBox.style.top = "20px";
-                    floatBox.style.left = "50%";
-                    floatBox.style.transform = "translateX(-50%)";
-                    floatBox.style.zIndex = "9999999";
-                    floatBox.style.padding = "20px";
-                    floatBox.style.backgroundColor = "#ff4b4b";
-                    floatBox.style.color = "white";
-                    floatBox.style.borderRadius = "12px";
-                    floatBox.style.textAlign = "center";
-                    floatBox.style.boxShadow = "0px 10px 25px rgba(0,0,0,0.4)";
-                    floatBox.style.fontFamily = "sans-serif";
-                    
-                    floatBox.innerHTML = `
-                        <h2 style="margin: 0 0 5px 0; font-size: 24px;">🚨 OBSERVATION DUE 🚨</h2>
-                        <button id="float-silence-btn" style="margin-top: 10px; padding: 12px 25px; font-size: 16px; font-weight: bold; background: white; color: #cc0000; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
-                            🔕 Silence Alarm
-                        </button>
-                    `;
-                    parentDoc.body.appendChild(floatBox);
-
-                    parentDoc.getElementById("float-silence-btn").onclick = window.silenceAlarm;
-                }}
-                floatBox.style.display = "block";
-            }} catch(e) {{}}
-
             playAlarmAudio();
             
             if (!isTest) {{ 
@@ -263,17 +224,11 @@ with st.sidebar:
                 isSilencedForThisMinute = false;
                 document.getElementById('alert-box').style.display = 'none';
                 document.getElementById('idle-box').style.display = 'block';
-                try {{
-                    let floatBox = window.parent.document.getElementById('floating-alert-box');
-                    if (floatBox) floatBox.style.display = "none";
-                }} catch(e) {{}}
             }}
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=120)
-    else:
-        st.info("🔕 Alerts Disabled.")
+        components.html(alarm_html, height=200)
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -442,7 +397,6 @@ if latest_raw and latest_ts:
         col_a, col_b = st.columns([2, 1])
         with col_a: st.code(f"{latest_raw}", language="bash")
         with col_b:
-            # BUMPED TIMEOUT TO 45 MINS TO REDUCE NWS CACHING FALSE ALARMS
             if age_minutes > 45: st.error(f"🚨 **COMM WARNING:** Ping is **{int(age_minutes)} mins old!** Check long-line.")
             else: st.success(f"✅ **Comms Good:** Latency is **{int(age_minutes)}** mins.")
     except: st.warning("Could not calculate age.")
