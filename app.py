@@ -8,63 +8,47 @@ import PyPDF2
 import base64
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
+st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# --- HEADER WITH LOGOS ---
-header_col1, header_col2 = st.columns([4, 2])
-
-with header_col1:
-    st.title("BHM CWO Tactical Dashboard 🌪️")
-    st.subheader("JO 7900.5E Logic Engine & Live Interface")
-
-with header_col2:
-    st.markdown("<br>", unsafe_allow_html=True)
-    logo1, logo2 = st.columns(2)
-    with logo1:
-        if os.path.exists("Cat and Hat.jpg"):
-            st.image("Cat and Hat.jpg", width=250)
-            st.caption("**Created by Eric Hattendorf**")
-        else:
-            st.caption("[Cat & Hat Missing]")
-    with logo2:
-        if os.path.exists("NWS.png"):
-            st.image("NWS.png", width=100)
-        else:
-            st.caption("[NWS Logo]")
-
-# --- ALARM SYSTEM (MOVED TO MAIN PAGE) ---
-with st.expander("⏰ METAR Alarm & Notification Settings", expanded=True):
-    col_al1, col_al2, col_al3, col_al4 = st.columns(4)
+# --- SIDEBAR: METAR ALARM ---
+with st.sidebar:
+    st.title("⏰ METAR Alarm")
+    st.markdown("Set a time to get an audio/visual alert before the XX:53 observation.")
     
-    with col_al1:
-        alarm_enabled = st.toggle("Enable Alarm Alerts", value=True)
-    with col_al2:
+    alarm_enabled = st.toggle("Enable Alarm Alerts", value=True)
+    
+    if alarm_enabled:
         alarm_minute = st.number_input("Trigger at XX past the hour:", min_value=0, max_value=59, value=48, step=1)
-    with col_al3:
+        
         sound_choices = [
             "1. SOS Morse Code", "2. Classic Triple Beep", "3. Two-Tone Warning", 
             "4. Gentle Chimes", "5. Submarine Ping", "6. Harsh Buzzer", 
-            "7. Digital Watch", "8. Air Raid Siren", "9. Radar Sweep", "10. Urgent Trill"
+            "7. Digital Watch", "8. Air Raid Siren", "9. Radar Sweep", "10. Urgent Trill",
+            "11. Telephone Ring", "12. Sci-Fi Alarm", "13. EKG Heart Monitor", 
+            "14. Fast Geiger", "15. Deep Foghorn"
         ]
         alarm_sound = st.selectbox("Select Sound Profile:", sound_choices)
         sound_id = int(alarm_sound.split(".")[0])
-    with col_al4:
-        alarm_vol = st.slider("Volume Level %", min_value=10, max_value=100, value=100, step=10)
+        
+        col_v1, col_v2 = st.columns(2)
+        with col_v1:
+            alarm_vol = st.slider("Volume %", min_value=10, max_value=100, value=100, step=10)
+        with col_v2:
+            alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-    if alarm_enabled:
+        # JavaScript injected to run the clock, auto-open the sidebar, and sound the alarm
         alarm_html = f"""
-        <div style="text-align: center; margin-top: 10px;">
-            <button onclick="triggerAlarmUI(true)" style="padding: 10px 20px; font-weight: bold; background-color: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
-                🔊 Test Volume & Full-Screen Visuals
-            </button>
-            <p style="font-size: 12px; color: gray; margin-top: 5px;">(Clicking 'Test' authorizes your web browser to play audio automatically)</p>
+        <div id="alarm-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 10px; margin-top: 10px; background: #f0f2f6;">
+            <h3 id="alarm-text" style="color: grey; margin: 0; font-size: 14px;">Monitoring clock for XX:{alarm_minute:02d}...</h3>
+            <button onclick="triggerAlarmUI(true)" style="margin-top:10px; padding: 6px 12px; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; background: white;">🔊 Test Sound</button>
+            <p style="font-size: 10px; color: gray; margin-top: 5px;">(Click 'Test' once to authorize audio)</p>
         </div>
 
-        <div id="full-screen-alarm" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(220, 20, 60, 0.95); z-index: 999999; flex-direction: column; justify-content: center; align-items: center; text-align: center; backdrop-filter: blur(5px);">
-            <h1 style="color: white; font-size: 6rem; font-family: sans-serif; margin: 0; text-shadow: 3px 3px 15px rgba(0,0,0,0.5);">🚨 TIME TO GO OUTSIDE 🚨</h1>
-            <h2 style="color: white; font-size: 3rem; font-family: sans-serif; margin-top: 10px;">XX:{alarm_minute:02d} METAR Observation Due</h2>
-            <button onclick="stopAlarmUI()" style="margin-top: 50px; padding: 25px 50px; font-size: 2.5rem; font-weight: bold; cursor: pointer; border-radius: 15px; border: none; background: white; color: #cc0000; box-shadow: 0px 10px 30px rgba(0,0,0,0.5); transition: 0.2s;">
-                Acknowledge & Silence
+        <div id="alarm-alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-top: 15px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
+            <h2 style="margin: 0; font-size: 22px;">🚨 TIME FOR METAR 🚨</h2>
+            <h3 style="margin: 5px 0 15px 0; font-size: 16px;">XX:{alarm_minute:02d} Observation Due</h3>
+            <button onclick="silenceAlarm()" style="padding: 10px 20px; font-size: 14px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
+                🔕 Silence Current Alarm
             </button>
         </div>
 
@@ -73,12 +57,16 @@ with st.expander("⏰ METAR Alarm & Notification Settings", expanded=True):
         let audioCtx;
         let activeOscillators = [];
         let alarmInterval;
+        let isSilencedForThisMinute = false;
 
         function playTone(freq, type, startDelay, duration, vol) {{
+            const pitchMult = {alarm_pitch} / 100.0;
+            const finalFreq = freq * pitchMult;
+            
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = type;
-            osc.frequency.value = freq;
+            osc.frequency.value = finalFreq;
             osc.connect(gain);
             gain.connect(audioCtx.destination);
             
@@ -103,52 +91,67 @@ with st.expander("⏰ METAR Alarm & Notification Settings", expanded=True):
             const v = {alarm_vol} / 100.0;
             const s = {sound_id};
 
-            if (s === 1) {{
+            if (s === 1) {{ // SOS
                 let t = 0;
                 for(let i=0; i<3; i++) {{
-                    playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v);
-                    t += 0.8;
-                    playTone(700, 'sine', t, 0.3, v); playTone(700, 'sine', t+0.4, 0.3, v); playTone(700, 'sine', t+0.8, 0.3, v);
-                    t += 1.3;
-                    playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v);
-                    t += 1.5;
+                    playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v); t += 0.8;
+                    playTone(700, 'sine', t, 0.3, v); playTone(700, 'sine', t+0.4, 0.3, v); playTone(700, 'sine', t+0.8, 0.3, v); t += 1.3;
+                    playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v); t += 1.5;
                 }}
             }} 
             else if (s === 2) {{ playTone(800, 'sine', 0, 0.15, v); playTone(800, 'sine', 0.3, 0.15, v); playTone(800, 'sine', 0.6, 0.15, v); }}
-            else if (s === 3) {{
-                for(let i=0; i<4; i++) {{ playTone(600, 'square', i*1.0, 0.5, v * 0.5); playTone(800, 'square', (i*1.0)+0.5, 0.5, v * 0.5); }}
-            }}
+            else if (s === 3) {{ for(let i=0; i<4; i++) {{ playTone(600, 'square', i*1.0, 0.5, v*0.5); playTone(800, 'square', (i*1.0)+0.5, 0.5, v*0.5); }} }}
             else if (s === 4) {{ playTone(523.25, 'sine', 0, 0.4, v); playTone(659.25, 'sine', 0.3, 0.4, v); playTone(783.99, 'sine', 0.6, 0.8, v); }}
-            else if (s === 5) {{ playTone(1000, 'sine', 0, 0.1, v); playTone(1000, 'sine', 0.1, 1.5, v * 0.1); }}
+            else if (s === 5) {{ playTone(1000, 'sine', 0, 0.1, v); playTone(1000, 'sine', 0.1, 1.5, v*0.1); }}
             else if (s === 6) {{ playTone(150, 'sawtooth', 0, 0.5, v); playTone(150, 'sawtooth', 0.8, 0.5, v); playTone(150, 'sawtooth', 1.6, 0.5, v); }}
-            else if (s === 7) {{
-                playTone(2000, 'square', 0, 0.08, v*0.2); playTone(2000, 'square', 0.15, 0.08, v*0.2);
-                playTone(2000, 'square', 1.0, 0.08, v*0.2); playTone(2000, 'square', 1.15, 0.08, v*0.2);
-            }}
+            else if (s === 7) {{ playTone(2000, 'square', 0, 0.08, v*0.2); playTone(2000, 'square', 0.15, 0.08, v*0.2); playTone(2000, 'square', 1.0, 0.08, v*0.2); playTone(2000, 'square', 1.15, 0.08, v*0.2); }}
             else if (s === 8) {{
                 const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
                 osc.type = 'sine'; osc.connect(gain); gain.connect(audioCtx.destination);
+                const pitchMult = {alarm_pitch} / 100.0;
                 gain.gain.setValueAtTime(0, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(v, audioCtx.currentTime + 0.5);
                 gain.gain.setValueAtTime(v, audioCtx.currentTime + 3.5); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 4.0);
-                osc.frequency.setValueAtTime(400, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(1200, audioCtx.currentTime + 2);
-                osc.frequency.linearRampToValueAtTime(400, audioCtx.currentTime + 4);
+                osc.frequency.setValueAtTime(400 * pitchMult, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(1200 * pitchMult, audioCtx.currentTime + 2);
+                osc.frequency.linearRampToValueAtTime(400 * pitchMult, audioCtx.currentTime + 4);
                 osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 4.0); activeOscillators.push(osc);
             }}
             else if (s === 9) {{ for(let i=0; i<3; i++) {{ playTone(900, 'triangle', i*1.5, 0.1, v); }} }}
             else if (s === 10) {{ for(let i=0; i<15; i++) {{ playTone(i%2==0 ? 700 : 750, 'square', i*0.1, 0.08, v*0.5); }} }}
+            else if (s === 11) {{ for(let i=0; i<6; i++) {{ playTone(1200, 'sine', i*0.15, 0.05, v); playTone(1500, 'sine', i*0.15+0.05, 0.05, v); }} }}
+            else if (s === 12) {{
+                for(let i=0; i<5; i++) {{
+                    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth'; osc.connect(gain); gain.connect(audioCtx.destination);
+                    const pitchMult = {alarm_pitch} / 100.0;
+                    gain.gain.setValueAtTime(v, audioCtx.currentTime + (i*0.5)); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + (i*0.5) + 0.4);
+                    osc.frequency.setValueAtTime(1500 * pitchMult, audioCtx.currentTime + (i*0.5)); osc.frequency.linearRampToValueAtTime(300 * pitchMult, audioCtx.currentTime + (i*0.5) + 0.4);
+                    osc.start(audioCtx.currentTime + (i*0.5)); osc.stop(audioCtx.currentTime + (i*0.5) + 0.4); activeOscillators.push(osc);
+                }}
+            }}
+            else if (s === 13) {{ playTone(900, 'sine', 0, 0.1, v); playTone(900, 'sine', 1.0, 0.1, v); playTone(900, 'sine', 2.0, 0.1, v); }}
+            else if (s === 14) {{ for(let i=0; i<20; i++) {{ playTone(2000, 'square', i*0.1 + (Math.random()*0.05), 0.02, v*0.2); }} }}
+            else if (s === 15) {{ playTone(100, 'sawtooth', 0, 2.0, v); playTone(102, 'square', 0, 2.0, v*0.5); }}
         }}
 
         function triggerAlarmUI(isTest = false) {{
-            document.getElementById('full-screen-alarm').style.display = 'flex';
+            // Force Streamlit Sidebar open if it is closed!
+            const expandBtn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
+            if (expandBtn) {{ expandBtn.click(); }}
+
+            document.getElementById('alarm-alert-box').style.display = 'block';
+            document.getElementById('alarm-box').style.display = 'none';
             playAlarmAudio();
+            
             if (!isTest) {{ alarmInterval = setInterval(playAlarmAudio, 5000); }}
         }}
 
-        function stopAlarmUI() {{
-            document.getElementById('full-screen-alarm').style.display = 'none';
+        function silenceAlarm() {{
             clearInterval(alarmInterval);
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
+            document.getElementById('alarm-alert-box').style.display = 'none';
+            document.getElementById('alarm-box').style.display = 'block';
+            isSilencedForThisMinute = true;
         }}
 
         let hasTriggeredThisHour = false;
@@ -156,19 +159,44 @@ with st.expander("⏰ METAR Alarm & Notification Settings", expanded=True):
         setInterval(function() {{
             var d = new Date();
             if (d.getMinutes() === {alarm_minute}) {{
-                if (!hasTriggeredThisHour) {{
+                if (!hasTriggeredThisHour && !isSilencedForThisMinute) {{
                     triggerAlarmUI(false);
                     hasTriggeredThisHour = true;
                 }}
             }} else {{
-                hasTriggeredThisHour = false;
+                hasTriggeredThisHour = false; 
+                isSilencedForThisMinute = false; // Reset the silence lock for the next hour
+                document.getElementById('alarm-alert-box').style.display = 'none';
+                document.getElementById('alarm-box').style.display = 'block';
             }}
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=80)
+        components.html(alarm_html, height=250)
     else:
-        st.info("🔕 Alarm is currently disabled. No audio or visual alerts will be triggered.")
+        st.info("🔕 Alarm Disabled")
+
+# --- HEADER WITH LOGOS ---
+header_col1, header_col2 = st.columns([4, 2])
+
+with header_col1:
+    st.title("BHM CWO Tactical Dashboard 🌪️")
+    st.subheader("JO 7900.5E Logic Engine & Live Interface")
+
+with header_col2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    logo1, logo2 = st.columns(2)
+    with logo1:
+        if os.path.exists("Cat and Hat.jpg"):
+            st.image("Cat and Hat.jpg", width=250)
+            st.caption("**Created by Eric Hattendorf**")
+        else:
+            st.caption("[Cat & Hat Missing]")
+    with logo2:
+        if os.path.exists("NWS.png"):
+            st.image("NWS.png", width=100)
+        else:
+            st.caption("[NWS Logo]")
 
 st.divider()
 
@@ -381,11 +409,15 @@ with calc_col2:
 with calc_col3:
     st.markdown("**☁️ Convective Cloud Base**")
     if live_temp_c is not None and live_dew_c is not None:
-        t_f, d_f = (live_temp_c * 9/5) + 32, (live_dew_c * 9/5) + 32
+        # We round the Celsius readings to integers BEFORE doing the math, exactly like a METAR
+        temp_c_int = round(live_temp_c)
+        dew_c_int = round(live_dew_c)
+        
+        t_f, d_f = (temp_c_int * 9/5) + 32, (dew_c_int * 9/5) + 32
         spread_f = t_f - d_f
-        # Snap the raw calculation to the nearest 100 feet for standard aviation reporting
         ccl_agl = int(round((spread_f * 230) / 100.0)) * 100
-        st.info(f"**Live Spread:** {int(spread_f)}°F")
+        
+        st.info(f"**Live Spread:** {int(spread_f)}°F (using {temp_c_int}C/{dew_c_int}C)")
         st.success(f"**Suggested Base:** {ccl_agl} ft AGL")
     else: st.warning("Awaiting live Temp/Dew data...")
 
