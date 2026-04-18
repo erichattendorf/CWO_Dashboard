@@ -2,10 +2,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 import requests
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import os
 import PyPDF2
 import base64
+import io
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -13,12 +14,12 @@ st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sideba
 # --- SIDEBAR: METAR ALARM ---
 with st.sidebar:
     st.title("⏰ METAR Alarm")
-    st.markdown("Set a time to get an audio/visual alert before the XX:53 observation.")
+    st.markdown("Alerts before the XX:53 observation.")
     
-    alarm_enabled = st.toggle("Enable Alarm Alerts", value=True)
+    alarm_enabled = st.toggle("Enable Alarm", value=True)
     
     if alarm_enabled:
-        alarm_minute = st.number_input("Trigger at XX past the hour:", min_value=0, max_value=59, value=48, step=1)
+        alarm_minute = st.number_input("Trigger at XX past hour:", min_value=0, max_value=59, value=48, step=1)
         
         sound_choices = [
             "1. SOS Morse Code", "2. Classic Triple Beep", "3. Two-Tone Warning", 
@@ -27,27 +28,27 @@ with st.sidebar:
             "11. Telephone Ring", "12. Sci-Fi Alarm", "13. EKG Heart Monitor", 
             "14. Fast Geiger", "15. Deep Foghorn"
         ]
-        alarm_sound = st.selectbox("Select Sound Profile:", sound_choices)
+        alarm_sound = st.selectbox("Sound Profile:", sound_choices)
         sound_id = int(alarm_sound.split(".")[0])
         
         col_v1, col_v2 = st.columns(2)
         with col_v1:
-            alarm_vol = st.slider("Volume %", min_value=10, max_value=100, value=100, step=10)
+            # Allows volume down to 1% using a true audio taper
+            alarm_vol = st.slider("Vol %", min_value=1, max_value=100, value=50, step=1)
         with col_v2:
             alarm_pitch = st.slider("Pitch %", min_value=50, max_value=200, value=100, step=10)
 
-        # JavaScript injected to run the clock, auto-open the sidebar, and sound the alarm
         alarm_html = f"""
-        <div id="alarm-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 10px; margin-top: 10px; background: #f0f2f6;">
-            <h3 id="alarm-text" style="color: grey; margin: 0; font-size: 14px;">Monitoring clock for XX:{alarm_minute:02d}...</h3>
-            <button onclick="triggerAlarmUI(true)" style="margin-top:10px; padding: 6px 12px; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; background: white;">🔊 Test Sound</button>
-            <p style="font-size: 10px; color: gray; margin-top: 5px;">(Click 'Test' once to authorize audio)</p>
+        <div id="idle-box" style="text-align:center; font-family:sans-serif; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
+            <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
+            <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Volume</button>
+            <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
         </div>
 
-        <div id="alarm-alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-top: 15px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
-            <h2 style="margin: 0; font-size: 22px;">🚨 TIME FOR METAR 🚨</h2>
-            <h3 style="margin: 5px 0 15px 0; font-size: 16px;">XX:{alarm_minute:02d} Observation Due</h3>
-            <button onclick="silenceAlarm()" style="padding: 10px 20px; font-size: 14px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%;">
+        <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3);">
+            <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
+            <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
+            <button onclick="silenceAlarm()" style="padding: 15px; font-size: 16px; font-weight: bold; color: #ff4b4b; background: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; box-shadow: 0px 2px 5px rgba(0,0,0,0.2);">
                 🔕 Silence Current Alarm
             </button>
         </div>
@@ -58,6 +59,8 @@ with st.sidebar:
         let activeOscillators = [];
         let alarmInterval;
         let isSilencedForThisMinute = false;
+        const originalTitle = "BHM CWO Dashboard";
+        let titleFlashInterval;
 
         function playTone(freq, type, startDelay, duration, vol) {{
             const pitchMult = {alarm_pitch} / 100.0;
@@ -88,10 +91,12 @@ with st.sidebar:
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
 
-            const v = {alarm_vol} / 100.0;
+            // Exponential volume scaling so 1% is actually whisper quiet
+            const rawVol = {alarm_vol} / 100.0;
+            const v = Math.pow(rawVol, 2);
             const s = {sound_id};
 
-            if (s === 1) {{ // SOS
+            if (s === 1) {{ 
                 let t = 0;
                 for(let i=0; i<3; i++) {{
                     playTone(700, 'sine', t, 0.1, v); playTone(700, 'sine', t+0.2, 0.1, v); playTone(700, 'sine', t+0.4, 0.1, v); t += 0.8;
@@ -134,23 +139,32 @@ with st.sidebar:
         }}
 
         function triggerAlarmUI(isTest = false) {{
-            // Force Streamlit Sidebar open if it is closed!
-            const expandBtn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
-            if (expandBtn) {{ expandBtn.click(); }}
-
-            document.getElementById('alarm-alert-box').style.display = 'block';
-            document.getElementById('alarm-box').style.display = 'none';
+            document.getElementById('idle-box').style.display = 'none';
+            document.getElementById('alert-box').style.display = 'block';
             playAlarmAudio();
             
-            if (!isTest) {{ alarmInterval = setInterval(playAlarmAudio, 5000); }}
+            // Aggressive visual flash in the browser tab
+            if (!isTest) {{ 
+                alarmInterval = setInterval(playAlarmAudio, 5000); 
+                try {{
+                    let flashState = false;
+                    titleFlashInterval = setInterval(() => {{
+                        window.parent.document.title = flashState ? "🚨 ALARM 🚨" : "OBSERVATION DUE!";
+                        flashState = !flashState;
+                    }}, 1000);
+                }} catch(e) {{}}
+            }}
         }}
 
         function silenceAlarm() {{
             clearInterval(alarmInterval);
+            clearInterval(titleFlashInterval);
+            try {{ window.parent.document.title = originalTitle; }} catch(e) {{}}
+            
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
-            document.getElementById('alarm-alert-box').style.display = 'none';
-            document.getElementById('alarm-box').style.display = 'block';
+            document.getElementById('alert-box').style.display = 'none';
+            document.getElementById('idle-box').style.display = 'block';
             isSilencedForThisMinute = true;
         }}
 
@@ -165,16 +179,16 @@ with st.sidebar:
                 }}
             }} else {{
                 hasTriggeredThisHour = false; 
-                isSilencedForThisMinute = false; // Reset the silence lock for the next hour
-                document.getElementById('alarm-alert-box').style.display = 'none';
-                document.getElementById('alarm-box').style.display = 'block';
+                isSilencedForThisMinute = false;
+                document.getElementById('alert-box').style.display = 'none';
+                document.getElementById('idle-box').style.display = 'block';
             }}
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=250)
+        components.html(alarm_html, height=220)
     else:
-        st.info("🔕 Alarm Disabled")
+        st.info("🔕 Alarm is currently disabled.")
 
 # --- HEADER WITH LOGOS ---
 header_col1, header_col2 = st.columns([4, 2])
@@ -409,14 +423,11 @@ with calc_col2:
 with calc_col3:
     st.markdown("**☁️ Convective Cloud Base**")
     if live_temp_c is not None and live_dew_c is not None:
-        # We round the Celsius readings to integers BEFORE doing the math, exactly like a METAR
         temp_c_int = round(live_temp_c)
         dew_c_int = round(live_dew_c)
-        
         t_f, d_f = (temp_c_int * 9/5) + 32, (dew_c_int * 9/5) + 32
         spread_f = t_f - d_f
         ccl_agl = int(round((spread_f * 230) / 100.0)) * 100
-        
         st.info(f"**Live Spread:** {int(spread_f)}°F (using {temp_c_int}C/{dew_c_int}C)")
         st.success(f"**Suggested Base:** {ccl_agl} ft AGL")
     else: st.warning("Awaiting live Temp/Dew data...")
@@ -506,11 +517,6 @@ st.divider()
 # --- PDF SEARCH ENGINE WITH VIEWER ---
 st.subheader("📚 JO 7900.5E Reference Manual")
 if os.path.exists("Order_JO_7900.5E.pdf"):
-    with open("Order_JO_7900.5E.pdf", "rb") as pdf_file: PDFbyte = pdf_file.read()
-    base64_pdf = base64.b64encode(PDFbyte).decode('utf-8')
-    with st.expander("📖 Click Here to Browse the Full JO 7900.5E Manual"):
-        st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}#page=1" width="100%" height="800" type="application/pdf">', unsafe_allow_html=True)
-    st.markdown("---")
     search_query = st.text_input("🔍 Search keyword (e.g., 'Freezing Drizzle', 'Tornado', 'SPECI'):")
     if search_query:
         with st.spinner(f"Scanning JO 7900.5E for '{search_query}'..."):
@@ -521,13 +527,28 @@ if os.path.exists("Order_JO_7900.5E.pdf"):
                     text = page.extract_text()
                     if text and search_query.lower() in text.lower():
                         idx, start = text.lower().find(search_query.lower()), max(0, text.lower().find(search_query.lower()) - 40)
-                        results.append((i+1, text[start:min(len(text), idx + 40)].replace('\n', ' ')))
+                        results.append((i, text[start:min(len(text), idx + 40)].replace('\n', ' ')))
+                
                 if results:
                     st.success(f"✅ Found {len(results)} matching pages!")
-                    match_dict = {f"Page {p} ( ...{snip}... )": p for p, snip in results}
+                    match_dict = {f"Page {p+1} ( ...{snip}... )": p for p, snip in results}
                     selected_match = st.selectbox("Select a match to view the document:", list(match_dict.keys()))
                     if selected_match:
-                        st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}#page={match_dict[selected_match]}" width="100%" height="800" type="application/pdf">', unsafe_allow_html=True)
+                        # FIX: We dynamically extract ONLY the target page to a tiny PDF!
+                        # This completely bypasses Chrome's memory limit for base64 files.
+                        target_page_idx = match_dict[selected_match]
+                        writer = PyPDF2.PdfWriter()
+                        writer.add_page(reader.pages[target_page_idx])
+                        
+                        # Add the next page too just in case the text bleeds over
+                        if target_page_idx + 1 < len(reader.pages):
+                            writer.add_page(reader.pages[target_page_idx + 1])
+                            
+                        pdf_bytes = io.BytesIO()
+                        writer.write(pdf_bytes)
+                        b64_small_pdf = base64.b64encode(pdf_bytes.getvalue()).decode('utf-8')
+                        
+                        st.markdown(f'<embed src="data:application/pdf;base64,{b64_small_pdf}" width="100%" height="800" type="application/pdf">', unsafe_allow_html=True)
                 else: st.warning("No results found.")
             except Exception as e: st.error(f"Error reading PDF. ({e})")
 else: st.error("⚠️ `Order_JO_7900.5E.pdf` not found in folder!")
