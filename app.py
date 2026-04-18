@@ -406,4 +406,12 @@ if search_query:
                 
                 if results:
                     st.success(f"✅ Found {len(results)} matching pages in the JO 7900.5E!")
-                    for page_num, snippet, full_text in results
+                    for page_num, snippet, full_text in results:
+                        with st.expander(f"📄 **Page {page_num}:** `...{snippet}...`"):
+                            st.text(full_text)
+                else:
+                    st.warning("No results found in the manual.")
+            except Exception as e:
+                st.error(f"Error reading PDF. Are you sure it isn't corrupted? ({e})")
+    else:
+        st.error("⚠️ `Order_JO_7900.5E.pdf` not found. Please upload it to your GitHub repository in the exact same folder as the app!")
