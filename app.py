@@ -3,7 +3,7 @@ import requests
 import re
 from datetime import datetime, timezone
 import os
-import time # Added for the Cache-Buster
+import time
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide")
@@ -34,17 +34,20 @@ st.divider()
 # --- FUNCTIONS ---
 
 def get_5min_asos():
-    """Pulls high-frequency 5-minute ASOS data using a Cache-Buster."""
+    """Pulls high-frequency 5-minute ASOS data using a hidden Cache-Buster."""
     try:
-        # CACHE BUSTER: Appending the exact live timestamp forces the NWS server to give us fresh data
-        current_time = int(time.time())
-        url = f"https://api.weather.gov/stations/KBHM/observations?limit=5&nocache={current_time}"
+        # Reverted to the strict API URL so we don't trigger the 400 Bad Request
+        url = "https://api.weather.gov/stations/KBHM/observations?limit=3"
         
+        # CACHE BUSTER: We hide the changing timestamp inside the User-Agent string. 
+        # The firewall sees a "new" visitor every time and hands over fresh data.
+        current_time = int(time.time())
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+            "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 CB/{current_time}",
             "Accept": "application/geo+json",
-            "Cache-Control": "no-cache", # Explicitly telling the NWS server we refuse stale data
-            "Pragma": "no-cache"
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
         }
         response = requests.get(url, headers=headers, timeout=5)
         
