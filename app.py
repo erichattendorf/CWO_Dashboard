@@ -73,41 +73,40 @@ def load_json_db(filepath, default_val=[]):
 def save_json_db(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
-sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"current": "MAY 2026", "next": "JUNE 2026"})
+sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"current": "APRIL 2026", "next": "MAY 2026"})
 
 # --- INITIAL DEFAULT SCHEDULE FOR FIRST BOOT ---
 baseline_csv_string = """DAY,DATE,SP,RWB,TH,JA,MG,EJH,JDM,TRH
-FRI,1,M,D,E,,,,,
-SAT,2,M ,,,D,,,,E
-SUN,3,,,,,M,,D,E
-MON,4,,D,LV,E,M,,,
-TUE,5,M,D,E,A,,,,
-WED ,6,M,D,E,,,,,-
-THU,7,M,D,E,,,,,-
-FRI ,8,M,D,E,,,,,-
-SAT,9,M,,,E,,D,,-
-SUN,10,,,,E,M,,D,-
-MON ,11,,D,E,,M,,,-
-TUE,12,M,D,E,,,,,
-WED,13,M,D,E,,,,,
-THU,14,M,D,E,,,,,A
-FRI,15,M ,D,E,,,,,
-SAT,16,M,,,D,,-,,E
-SUN ,17,,,,,M,-,D,E
-MON,18,,D,E,,M,-,,
-TUE,19,M,D,E,,,-,,
-WED,20,M,D,E,,,-,,
-THU ,21,M,D,E,,,-,,A
-FRI ,22,M,D,E,,,-,,
-SAT,23,M,,,D,,-,E,-
-SUN ,24,,,,E,M,-,D,-
-MON,25,,H,E,,M,-,D,-
-TUE,26,M,D,E,,,-,,-
-WED,27,M,D,E,,,-,,-
-THU,28,M,D,E,,,-,,-
-FRI,29,M,D,E,A,,-,,-
-SAT,30,M,,,D,,-,E,-
-SUN,31,,,,E,M,-,D,-"""
+WED,1,M,D,E,,,,,OFF
+THU,2,M ,D,E,,,,,-
+FRI,3,M,D,E,A,,,,-
+SAT,4,M,,,E,,D,,-
+SUN,5,,,,E,M,,D,-
+MON ,6,,D,E,,M,,,OFF
+TUE,7,M,D,E,OFF,,,,
+WED ,8,M,D,E,,,,,
+THU,9,M,D,E,,,,,A
+FRI,10,M,D,E,,,,,
+SAT ,11,M,,,D,,,,E
+SUN,12,,,,,M,,D,E
+MON,13,,D,E,,M,,,
+TUE,14,M,D,E,,,,,
+WED,15,M ,D,SLV,,,,,E
+THU,16,M,D,E,,,,,
+FRI ,17,M,D,E,A,,,,OFF
+SAT,18,M,,,E,,D,,OFF
+SUN,19,,,,E,M,,D,OFF
+MON,20,,D,E,,M,,,
+TUE ,21,M,D,E,,,,,
+WED ,22,M,D,E,,,,,
+THU,23,M,D,E,,,,,A
+FRI ,24,M,D,E,,,,,
+SAT,25,M,,,D,,,,E
+SUN,26,,,,,M,,D,E
+MON,27,,D,E,,M,,,
+TUE,28,M,D,E,,,,,
+WED,29,M,D,E,A,,,,
+THU,30,M,D,E,,,,,"""
 
 if not os.path.exists("current_baseline.csv"):
     with open("current_baseline.csv", "w") as f: f.write(baseline_csv_string)
@@ -395,7 +394,6 @@ def get_regional_5min():
 def get_awc_data():
     try:
         url = "https://aviationweather.gov/api/data/metar?ids=KBHM&format=json&hours=6"
-        # Increased timeout and added User-Agent to prevent AWC from blocking the connection
         response = requests.get(url, headers=NWS_HEADERS, timeout=10)
         if response.status_code == 200: 
             data = response.json()
@@ -501,7 +499,6 @@ with top_col1:
 
 with top_col2:
     st.markdown("#### 📡 Auto-Updating Radar (KBMX)")
-    # Radar height increased and object-fit added to ensure the timestamp is never cropped
     radar_html = """
     <div style="text-align:center; height: 100%;">
         <img id="auto-radar" src="https://radar.weather.gov/ridge/standard/KBMX_loop.gif" style="width:100%; max-height: 550px; object-fit: contain; border-radius:10px;">
@@ -786,7 +783,6 @@ with leave_tab:
                 st.rerun()
             else: st.warning("Please enter a name.")
 
-    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR ---
     st.markdown("---")
     st.markdown("#### 12-Month Visual Leave Calendar")
     
