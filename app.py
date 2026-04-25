@@ -356,7 +356,7 @@ def parse_nws_properties(props):
 def get_5min_asos():
     try:
         url = "https://api.weather.gov/stations/KBHM/observations?limit=10"
-        response = requests.get(url, headers=NWS_HEADERS, timeout=5)
+        response = requests.get(url, headers=NWS_HEADERS, timeout=10)
         if response.status_code == 200:
             features = response.json().get('features', [])
             if len(features) > 0:
@@ -395,17 +395,23 @@ def get_regional_5min():
 def get_awc_data():
     try:
         url = "https://aviationweather.gov/api/data/metar?ids=KBHM&format=json&hours=6"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200: return response.json()
+        # Increased timeout and added User-Agent to prevent AWC from blocking the connection
+        response = requests.get(url, headers=NWS_HEADERS, timeout=10)
+        if response.status_code == 200: 
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data
         return None
     except: return None
 
 def get_taf_data():
     try:
         url = "https://aviationweather.gov/api/data/taf?ids=KBHM&format=json"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200 and len(response.json()) > 0:
-            return response.json()[0].get('rawTAF', 'TAF currently unavailable.')
+        response = requests.get(url, headers=NWS_HEADERS, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data[0].get('rawTAF', 'TAF currently unavailable.')
         return "TAF currently unavailable."
     except: return "Error fetching TAF."
 
@@ -495,9 +501,10 @@ with top_col1:
 
 with top_col2:
     st.markdown("#### 📡 Auto-Updating Radar (KBMX)")
+    # Radar height increased and object-fit added to ensure the timestamp is never cropped
     radar_html = """
-    <div style="text-align:center;">
-        <img id="auto-radar" src="https://radar.weather.gov/ridge/standard/KBMX_loop.gif" style="width:100%; border-radius:10px;">
+    <div style="text-align:center; height: 100%;">
+        <img id="auto-radar" src="https://radar.weather.gov/ridge/standard/KBMX_loop.gif" style="width:100%; max-height: 550px; object-fit: contain; border-radius:10px;">
     </div>
     <script>
         setInterval(function() {
@@ -507,7 +514,7 @@ with top_col2:
         }, 300000);
     </script>
     """
-    components.html(radar_html, height=450)
+    components.html(radar_html, height=580)
 
 st.divider()
 
@@ -839,7 +846,6 @@ with leave_tab:
             cal = LeaveCalendar(leave_dict, calc_year, calc_month)
             cal_html = cal.formatmonth(calc_year, calc_month)
             
-            # FIX: Replace Python's default table tag with our styled one!
             cal_html = cal_html.replace('<table border="0" cellpadding="0" cellspacing="0" class="month">', '<table style="width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif; margin-bottom: 20px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1);">')
             
             with cols[col_idx]:
