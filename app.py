@@ -60,22 +60,19 @@ current_shift_id = f"{shift_date}_{shift_name}"
 # --- FILE DATABASE HELPER FUNCTIONS ---
 LOGS_FILE = "shift_logs.json"
 LEAVE_FILE = "leave_requests.json"
-SCHEDULE_FILE = "edited_schedule.csv"
 
 def load_json_db(filepath):
     if os.path.exists(filepath):
         try:
-            with open(filepath, "r") as f:
-                return json.load(f)
+            with open(filepath, "r") as f: return json.load(f)
         except: return []
     return []
 
 def save_json_db(filepath, data):
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=4)
+    with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
-# --- MAY 2026 BASELINE SCHEDULE ---
-baseline_csv = """DAY,DATE,SP,RWB,TH,JA,MG,EJH,JDM,TRH
+# --- INITIAL DEFAULT SCHEDULE FOR FIRST BOOT ---
+baseline_csv_string = """DAY,DATE,SP,RWB,TH,JA,MG,EJH,JDM,TRH
 FRI,1,M,D,E,,,,,
 SAT,2,M ,,,D,,,,E
 SUN,3,,,,,M,,D,E
@@ -108,12 +105,9 @@ FRI,29,M,D,E,A,,-,,-
 SAT,30,M,,,D,,-,E,-
 SUN,31,,,,E,M,-,D,-"""
 
-df_baseline = pd.read_csv(io.StringIO(baseline_csv))
-
-if os.path.exists(SCHEDULE_FILE):
-    df_current_sched = pd.read_csv(SCHEDULE_FILE)
-else:
-    df_current_sched = df_baseline.copy()
+if not os.path.exists("current_baseline.csv"):
+    with open("current_baseline.csv", "w") as f:
+        f.write(baseline_csv_string)
 
 # --- SIDEBAR: SHIFT DUTIES & ALERTS ---
 with st.sidebar:
@@ -157,7 +151,6 @@ with st.sidebar:
         <div id="idle-box" style="text-align:center; border-radius: 10px; padding: 15px; margin-top: 10px; background: #f0f2f6; border: 1px solid #ddd;">
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
             <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
-            <p style="font-size: 10px; color: gray; margin-top: 8px;">(Click 'Test' once to authorize audio)</p>
         </div>
 
         <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px;">
@@ -262,9 +255,7 @@ with st.sidebar:
             try {{
                 const parent = window.parent.document;
                 const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
-                if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{
-                    expandBtn.click();
-                }}
+                if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{ expandBtn.click(); }}
             }} catch(e) {{}}
 
             document.getElementById('idle-box').style.display = 'none';
@@ -290,7 +281,7 @@ with st.sidebar:
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=180)
+        components.html(alarm_html, height=160)
     else:
         st.info("🔕 Alerts Disabled.")
 
@@ -492,7 +483,6 @@ with top_col1:
         st.markdown("#### ✈️ KBHM Current TAF")
         taf_string = get_taf_data()
         if taf_string != "TAF currently unavailable." and taf_string != "Error fetching TAF.":
-            # Nicely format the TAF string with line breaks for standard aviation viewing
             formatted_taf = re.sub(r'(FM\d{6}|TEMPO|BECMG|PROB)', r'\n\1', taf_string)
             st.info(formatted_taf)
         else:
@@ -509,7 +499,6 @@ with top_col1:
 
 with top_col2:
     st.markdown("#### 📡 Auto-Updating Radar (KBMX)")
-    # This HTML injects the NWS GIF and automatically forces it to reload every 5 minutes!
     radar_html = """
     <div style="text-align:center;">
         <img id="auto-radar" src="https://radar.weather.gov/ridge/standard/KBMX_loop.gif" style="width:100%; border-radius:10px;">
@@ -519,7 +508,7 @@ with top_col2:
             var img = document.getElementById("auto-radar");
             var timestamp = new Date().getTime();
             img.src = "https://radar.weather.gov/ridge/standard/KBMX_loop.gif?t=" + timestamp;
-        }, 300000); // 300,000 ms = 5 minutes
+        }, 300000);
     </script>
     """
     components.html(radar_html, height=450)
@@ -574,8 +563,6 @@ with cont_tab:
 
 with log_tab:
     st.markdown("### Persistent Shift Notes Database")
-    st.caption("Notes entered here are saved permanently and can be viewed by subsequent shifts.")
-    
     logs = load_json_db(LOGS_FILE)
     
     new_log = st.text_area("Enter a new shift note/passdown:", height=100)
@@ -588,20 +575,17 @@ with log_tab:
                     "shift": shift_name,
                     "note": new_log.strip()
                 }
-                logs.insert(0, entry) # Put newest at the top
+                logs.insert(0, entry) 
                 save_json_db(LOGS_FILE, logs)
                 st.success("Saved!")
                 st.rerun()
-            else:
-                st.warning("Note is empty.")
+            else: st.warning("Note is empty.")
     
     st.markdown("---")
     st.markdown("#### Passdown History")
     if logs:
-        for l in logs:
-            st.info(f"**{l['timestamp']}** ({l['shift']})\n\n{l['note']}")
-    else:
-        st.caption("No logs currently in database.")
+        for l in logs: st.info(f"**{l['timestamp']}** ({l['shift']})\n\n{l['note']}")
+    else: st.caption("No logs currently in database.")
 
 st.divider()
 
@@ -686,11 +670,9 @@ with tab_precip:
             sec_dir = st.selectbox("Sector:", ["N", "NE", "E", "SE", "S", "SW", "W", "NW"])
             sec_vis = st.text_input("Vis (e.g. 1 1/2):", "1")
             rmks['G'] = f"VIS {sec_dir} {sec_vis}"
-        
         has_vrb_vis = st.checkbox("Variable Vis (RMK F)")
         if has_vrb_vis:
-            vrb_min = st.text_input("Min Vis:", "1/2")
-            vrb_max = st.text_input("Max Vis:", "2")
+            vrb_min, vrb_max = st.text_input("Min Vis:", "1/2"), st.text_input("Max Vis:", "2")
             rmks['F'] = f"VIS {vrb_min}V{vrb_max}"
 
 st.markdown("---")
@@ -703,58 +685,72 @@ st.divider()
 
 # --- ADMIN TOOLS: SCHEDULE & LEAVE ---
 st.subheader("📅 Admin: Scheduling & Operations")
-sched_tab, leave_tab = st.tabs(["MAY 2026 Schedule Editor", "🏖️ 12-Month Leave Calendar"])
+sched_tab, leave_tab = st.tabs(["Monthly Schedule Tracker", "🏖️ 12-Month Leave Calendar"])
 
 with sched_tab:
-    st.markdown("**BIRMINGHAM AL CWO MAY 2026 SCHEDULE**")
-    st.caption("Legend: M: 2200-0600 | A: 0600-1400 | D: 0600-1400 | E: 1400-2200")
+    view_toggle = st.radio("Select Schedule to View/Edit:", ["Current Month", "Next Month"], horizontal=True)
     
-    # Use Streamlit's native data editor so users can change shifts
-    edited_df = st.data_editor(df_current_sched, num_rows="dynamic", use_container_width=True)
+    if view_toggle == "Next Month":
+        st.info("Upload the baseline CSV schedule for next month here. (Save your Excel/Word table as a .csv file first)")
+        uploaded_csv = st.file_uploader("Upload Schedule (CSV)", type=['csv'])
+        if uploaded_csv:
+            df_new = pd.read_csv(uploaded_csv)
+            df_new.to_csv("next_baseline.csv", index=False)
+            if os.path.exists("next_edited.csv"): os.remove("next_edited.csv")
+            st.success("Next month schedule uploaded successfully!")
+            st.rerun()
+            
+    base_file = "current_baseline.csv" if view_toggle == "Current Month" else "next_baseline.csv"
+    edit_file = "current_edited.csv" if view_toggle == "Current Month" else "next_edited.csv"
     
-    if st.button("💾 Save Schedule Edits"):
-        edited_df.to_csv(SCHEDULE_FILE, index=False)
-        st.success("Schedule Updated!")
-        st.rerun()
+    if not os.path.exists(base_file):
+        st.warning(f"No schedule found for {view_toggle}. Please upload one above.")
+    else:
+        df_base = pd.read_csv(base_file)
+        if os.path.exists(edit_file): df_curr = pd.read_csv(edit_file)
+        else: df_curr = df_base.copy()
+            
+        st.markdown(f"**{view_toggle.upper()} SCHEDULE**")
+        st.caption("Legend: M: 2200-0600 | A: 0600-1400 | D: 0600-1400 | E: 1400-2200")
         
-    st.markdown("---")
-    st.markdown("### 🔴 Schedule Redline Tracker")
-    st.caption("Shows changes made from the original published baseline schedule.")
-    
-    # Custom HTML engine to generate the "Redline" effect for changed cells
-    html = "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 14px;'>"
-    html += "<tr style='background-color: #f0f2f6;'>" + "".join([f"<th style='border: 1px solid #ddd; padding: 8px;'>{c}</th>" for c in df_baseline.columns]) + "</tr>"
-    
-    # Compare current data against the baseline to highlight changes
-    for i in range(len(df_baseline)):
-        html += "<tr>"
-        for col in df_baseline.columns:
-            val_base = str(df_baseline.loc[i, col])
-            try:
-                val_curr = str(df_current_sched.loc[i, col])
-            except KeyError:
-                val_curr = "NaN"
-                
-            if pd.isna(df_baseline.loc[i, col]): val_base = ""
-            if pd.isna(df_current_sched.loc[i, col]) if i < len(df_current_sched) else True: val_curr = ""
-            if val_base == "nan": val_base = ""
-            if val_curr == "nan": val_curr = ""
+        edited_df = st.data_editor(df_curr, num_rows="dynamic", use_container_width=True, key=f"editor_{view_toggle}")
+        
+        if st.button(f"💾 Save {view_toggle} Edits"):
+            edited_df.to_csv(edit_file, index=False)
+            st.success("Schedule Updated!")
+            st.rerun()
+            
+        st.markdown("---")
+        st.markdown(f"### 🔴 {view_toggle} Redline Tracker")
+        st.caption("Shows changes made from the original published baseline schedule.")
+        
+        html = "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 14px;'>"
+        html += "<tr style='background-color: #f0f2f6;'>" + "".join([f"<th style='border: 1px solid #ddd; padding: 8px;'>{c}</th>" for c in df_base.columns]) + "</tr>"
+        
+        for i in range(len(df_base)):
+            html += "<tr>"
+            for col in df_base.columns:
+                val_base = str(df_base.loc[i, col])
+                try: val_curr = str(df_curr.loc[i, col])
+                except KeyError: val_curr = "NaN"
+                    
+                if pd.isna(df_base.loc[i, col]): val_base = ""
+                if i < len(df_curr) and pd.isna(df_curr.loc[i, col]): val_curr = ""
+                if val_base == "nan": val_base = ""
+                if val_curr == "nan": val_curr = ""
 
-            if val_base != val_curr:
-                # The Redline Effect
-                cell_html = f"<del style='color:red;'>{val_base}</del><br><span style='color:red; font-weight:bold;'>{val_curr}</span>"
-            else:
-                cell_html = val_curr
-            html += f"<td style='border: 1px solid #ddd; padding: 8px;'>{cell_html}</td>"
-        html += "</tr>"
-    html += "</table>"
-    
-    st.markdown(html, unsafe_allow_html=True)
+                if val_base != val_curr:
+                    cell_html = f"<del style='color:red;'>{val_base}</del><br><span style='color:red; font-weight:bold;'>{val_curr}</span>"
+                else:
+                    cell_html = val_curr
+                html += f"<td style='border: 1px solid #ddd; padding: 8px;'>{cell_html}</td>"
+            html += "</tr>"
+        html += "</table>"
+        st.markdown(html, unsafe_allow_html=True)
 
 with leave_tab:
     st.markdown("### 🏖️ Employee Time-Off Requests")
     st.caption("Submit proposed time off for SWO review.")
-    
     leave_requests = load_json_db(LEAVE_FILE)
     
     col_req1, col_req2, col_req3, col_req4 = st.columns(4)
@@ -775,8 +771,7 @@ with leave_tab:
                 save_json_db(LEAVE_FILE, leave_requests)
                 st.success("Request logged!")
                 st.rerun()
-            else:
-                st.warning("Please enter a name.")
+            else: st.warning("Please enter a name.")
 
     st.markdown("---")
     if leave_requests:
@@ -787,5 +782,4 @@ with leave_tab:
         if st.button("🗑️ Clear All Requests (Admin)"):
             save_json_db(LEAVE_FILE, [])
             st.rerun()
-    else:
-        st.info("No time off requested yet.")
+    else: st.info("No time off requested yet.")
