@@ -8,6 +8,7 @@ import os
 import json
 import pandas as pd
 import io
+import calendar # Built-in Python tool to generate visual calendars!
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -60,16 +61,20 @@ current_shift_id = f"{shift_date}_{shift_name}"
 # --- FILE DATABASE HELPER FUNCTIONS ---
 LOGS_FILE = "shift_logs.json"
 LEAVE_FILE = "leave_requests.json"
+SCHED_CONFIG_FILE = "sched_config.json"
 
-def load_json_db(filepath):
+def load_json_db(filepath, default_val=[]):
     if os.path.exists(filepath):
         try:
             with open(filepath, "r") as f: return json.load(f)
-        except: return []
-    return []
+        except: return default_val
+    return default_val
 
 def save_json_db(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f, indent=4)
+
+# Load Schedule Config for Dynamic Month Names
+sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"current": "MAY 2026", "next": "JUNE 2026"})
 
 # --- INITIAL DEFAULT SCHEDULE FOR FIRST BOOT ---
 baseline_csv_string = """DAY,DATE,SP,RWB,TH,JA,MG,EJH,JDM,TRH
@@ -281,7 +286,7 @@ with st.sidebar:
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=160)
+        components.html(alarm_html, height=180)
     else:
         st.info("🔕 Alerts Disabled.")
 
@@ -688,9 +693,20 @@ st.subheader("📅 Admin: Scheduling & Operations")
 sched_tab, leave_tab = st.tabs(["Monthly Schedule Tracker", "🏖️ 12-Month Leave Calendar"])
 
 with sched_tab:
-    view_toggle = st.radio("Select Schedule to View/Edit:", ["Current Month", "Next Month"], horizontal=True)
-    
-    if view_toggle == "Next Month":
+    col_t1, col_t2 = st.columns([1, 1])
+    with col_t1:
+        view_toggle = st.radio("Select Schedule to View/Edit:", [f"Current Month ({sched_config['current']})", f"Next Month ({sched_config['next']})"], horizontal=True)
+    with col_t2:
+        is_current = "Current" in view_toggle
+        month_key = "current" if is_current else "next"
+        new_name = st.text_input("Rename this Schedule Month:", value=sched_config[month_key])
+        if st.button("Update Month Name"):
+            sched_config[month_key] = new_name
+            save_json_db(SCHED_CONFIG_FILE, sched_config)
+            st.success("Name updated!")
+            st.rerun()
+
+    if not is_current:
         st.info("Upload the baseline CSV schedule for next month here. (Save your Excel/Word table as a .csv file first)")
         uploaded_csv = st.file_uploader("Upload Schedule (CSV)", type=['csv'])
         if uploaded_csv:
@@ -700,8 +716,8 @@ with sched_tab:
             st.success("Next month schedule uploaded successfully!")
             st.rerun()
             
-    base_file = "current_baseline.csv" if view_toggle == "Current Month" else "next_baseline.csv"
-    edit_file = "current_edited.csv" if view_toggle == "Current Month" else "next_edited.csv"
+    base_file = "current_baseline.csv" if is_current else "next_baseline.csv"
+    edit_file = "current_edited.csv" if is_current else "next_edited.csv"
     
     if not os.path.exists(base_file):
         st.warning(f"No schedule found for {view_toggle}. Please upload one above.")
@@ -710,18 +726,18 @@ with sched_tab:
         if os.path.exists(edit_file): df_curr = pd.read_csv(edit_file)
         else: df_curr = df_base.copy()
             
-        st.markdown(f"**{view_toggle.upper()} SCHEDULE**")
-        st.caption("Legend: M: 2200-0600 | A: 0600-1400 | D: 0600-1400 | E: 1400-2200")
+        st.markdown(f"**BIRMINGHAM AL CWO {sched_config[month_key]} SCHEDULE**")
+        st.caption("Legend: M: 2200-0600 | A: 0600-1400 | D: 0600-1400 | E: 1400-2200 | LV: Leave | H: Holiday | - : Off")
         
         edited_df = st.data_editor(df_curr, num_rows="dynamic", use_container_width=True, key=f"editor_{view_toggle}")
         
-        if st.button(f"💾 Save {view_toggle} Edits"):
+        if st.button(f"💾 Save {sched_config[month_key]} Edits"):
             edited_df.to_csv(edit_file, index=False)
             st.success("Schedule Updated!")
             st.rerun()
             
         st.markdown("---")
-        st.markdown(f"### 🔴 {view_toggle} Redline Tracker")
+        st.markdown(f"### 🔴 {sched_config[month_key]} Redline Tracker")
         st.caption("Shows changes made from the original published baseline schedule.")
         
         html = "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 14px;'>"
@@ -750,7 +766,6 @@ with sched_tab:
 
 with leave_tab:
     st.markdown("### 🏖️ Employee Time-Off Requests")
-    st.caption("Submit proposed time off for SWO review.")
     leave_requests = load_json_db(LEAVE_FILE)
     
     col_req1, col_req2, col_req3, col_req4 = st.columns(4)
@@ -773,13 +788,21 @@ with leave_tab:
                 st.rerun()
             else: st.warning("Please enter a name.")
 
+    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR ---
     st.markdown("---")
-    if leave_requests:
-        df_leave = pd.DataFrame(leave_requests)
-        df_leave = df_leave.sort_values(by="start")
-        st.dataframe(df_leave, use_container_width=True, hide_index=True)
-        
-        if st.button("🗑️ Clear All Requests (Admin)"):
-            save_json_db(LEAVE_FILE, [])
-            st.rerun()
-    else: st.info("No time off requested yet.")
+    st.markdown("#### 12-Month Visual Leave Calendar")
+    
+    # Process all leave requests into a master dictionary mapping dates to names
+    leave_dict = {}
+    for req in leave_requests:
+        try:
+            start_date = datetime.strptime(req['start'], "%Y-%m-%d")
+            end_date = datetime.strptime(req['end'], "%Y-%m-%d")
+            delta = end_date - start_date
+            for i in range(delta.days + 1):
+                d_str = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+                if d_str not in leave_dict: leave_dict[d_str] = []
+                leave_dict[d_str].append(req['name'])
+        except Exception as e: pass
+
+    # Build
