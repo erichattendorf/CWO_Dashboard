@@ -8,7 +8,7 @@ import os
 import json
 import pandas as pd
 import io
-import calendar # Built-in Python tool to generate visual calendars!
+import calendar
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -73,7 +73,6 @@ def load_json_db(filepath, default_val=[]):
 def save_json_db(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
-# Load Schedule Config for Dynamic Month Names
 sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"current": "MAY 2026", "next": "JUNE 2026"})
 
 # --- INITIAL DEFAULT SCHEDULE FOR FIRST BOOT ---
@@ -111,8 +110,7 @@ SAT,30,M,,,D,,-,E,-
 SUN,31,,,,E,M,-,D,-"""
 
 if not os.path.exists("current_baseline.csv"):
-    with open("current_baseline.csv", "w") as f:
-        f.write(baseline_csv_string)
+    with open("current_baseline.csv", "w") as f: f.write(baseline_csv_string)
 
 # --- SIDEBAR: SHIFT DUTIES & ALERTS ---
 with st.sidebar:
@@ -157,7 +155,6 @@ with st.sidebar:
             <h3 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Monitoring for XX:{alarm_minute:02d}</h3>
             <button onclick="triggerAlarmUI(true)" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #aaa; cursor: pointer; background: white; font-weight: bold; color: #333;">🔊 Test Alert</button>
         </div>
-
         <div id="alert-box" style="display:none; background-color: #ff4b4b; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-top: 10px;">
             <h2 style="margin: 0; font-size: 24px; font-family: sans-serif;">🚨 ALARM 🚨</h2>
             <h3 style="margin: 5px 0 15px 0; font-size: 16px; font-weight: normal;">Observation Due!</h3>
@@ -165,7 +162,6 @@ with st.sidebar:
                 🔕 Silence Current Alarm
             </button>
         </div>
-
         <script>
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         let audioCtx;
@@ -182,13 +178,11 @@ with st.sidebar:
             osc.frequency.value = finalFreq;
             osc.connect(gain);
             gain.connect(audioCtx.destination);
-            
             const t = audioCtx.currentTime + startDelay;
             gain.gain.setValueAtTime(0, t);
             gain.gain.linearRampToValueAtTime(vol, t + 0.02);
             gain.gain.setValueAtTime(vol, t + duration - 0.02);
             gain.gain.linearRampToValueAtTime(0, t + duration);
-            
             osc.start(t);
             osc.stop(t + duration);
             activeOscillators.push(osc);
@@ -197,10 +191,8 @@ with st.sidebar:
         function playAlarmAudio() {{
             if (!audioCtx) audioCtx = new AudioContext();
             if (audioCtx.state === 'suspended') audioCtx.resume();
-            
             activeOscillators.forEach(osc => {{ try {{ osc.stop(); }} catch(e){{}} }});
             activeOscillators = [];
-
             const rawVol = {alarm_vol} / 100.0;
             const v = Math.pow(rawVol, 2);
             const s = {sound_id};
@@ -262,7 +254,6 @@ with st.sidebar:
                 const expandBtn = parent.querySelector('[data-testid="collapsedControl"]');
                 if (expandBtn && expandBtn.getAttribute('aria-expanded') !== 'true') {{ expandBtn.click(); }}
             }} catch(e) {{}}
-
             document.getElementById('idle-box').style.display = 'none';
             document.getElementById('alert-box').style.display = 'block';
             playAlarmAudio();
@@ -286,7 +277,7 @@ with st.sidebar:
         }}, 1000);
         </script>
         """
-        components.html(alarm_html, height=180)
+        components.html(alarm_html, height=160)
     else:
         st.info("🔕 Alerts Disabled.")
 
@@ -792,7 +783,6 @@ with leave_tab:
     st.markdown("---")
     st.markdown("#### 12-Month Visual Leave Calendar")
     
-    # Process all leave requests into a master dictionary mapping dates to names
     leave_dict = {}
     for req in leave_requests:
         try:
@@ -805,4 +795,63 @@ with leave_tab:
                 leave_dict[d_str].append(req['name'])
         except Exception as e: pass
 
-    # Build
+    class LeaveCalendar(calendar.HTMLCalendar):
+        def __init__(self, l_dict, yr, mo):
+            super().__init__()
+            self.l_dict = l_dict
+            self.yr = yr
+            self.mo = mo
+
+        def formatday(self, day, weekday):
+            if day == 0: return '<td style="background-color:#fafafa; border:1px solid #eee;">&nbsp;</td>'
+            date_str = f"{self.yr}-{self.mo:02d}-{day:02d}"
+            cell_html = f"<strong style='font-size: 14px;'>{day}</strong><br>"
+            bg_color = "white"
+            
+            if date_str in self.l_dict:
+                bg_color = "#ffcccc"
+                names = "<br>".join([f"<span style='font-size:10px; color:white; background:#cc0000; padding:2px 4px; border-radius:3px; display:inline-block; margin-top:2px; white-space:nowrap;'>{n}</span>" for n in self.l_dict[date_str]])
+                cell_html += names
+                
+            return f'<td style="background-color:{bg_color}; border:1px solid #ddd; vertical-align:top; height:70px; width:14%; padding:3px;">{cell_html}</td>'
+
+        def formatmonthname(self, theyear, themonth, withyear=True):
+            month_name = calendar.month_name[themonth]
+            return f'<tr><th colspan="7" style="background-color:#333; color:white; font-size:16px; padding:8px; border-radius: 5px 5px 0 0;">{month_name} {theyear}</th></tr>'
+            
+        def formatweekheader(self):
+            s = ''.join(f'<th style="background-color:#f0f2f6; color:#333; padding:5px; font-size:12px; border:1px solid #ddd;">{wk}</th>' for wk in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+            return f'<tr>{s}</tr>'
+
+    cur_year = datetime.now(bhm_tz).year
+    cur_month = datetime.now(bhm_tz).month
+
+    for row in range(4):
+        cols = st.columns(3)
+        for col_idx in range(3):
+            offset = row * 3 + col_idx
+            calc_month = cur_month + offset
+            calc_year = cur_year
+            while calc_month > 12:
+                calc_month -= 12
+                calc_year += 1
+
+            cal = LeaveCalendar(leave_dict, calc_year, calc_month)
+            cal_html = cal.formatmonth(calc_year, calc_month)
+            
+            # FIX: Replace Python's default table tag with our styled one!
+            cal_html = cal_html.replace('<table border="0" cellpadding="0" cellspacing="0" class="month">', '<table style="width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif; margin-bottom: 20px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1);">')
+            
+            with cols[col_idx]:
+                st.markdown(cal_html, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("#### Manage Raw Requests")
+    if leave_requests:
+        df_leave = pd.DataFrame(leave_requests).sort_values(by="start")
+        st.dataframe(df_leave, use_container_width=True, hide_index=True)
+        
+        if st.button("🗑️ Clear All Requests (Admin)"):
+            save_json_db(LEAVE_FILE, [])
+            st.rerun()
+    else: st.info("No time off requested yet.")
