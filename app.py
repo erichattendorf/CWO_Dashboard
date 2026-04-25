@@ -9,7 +9,7 @@ import json
 import pandas as pd
 import io
 import calendar
-import docx  # The new Word Document engine!
+import docx
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -74,40 +74,30 @@ def load_json_db(filepath, default_val=[]):
 def save_json_db(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
-sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"current": "APRIL 2026", "next": "MAY 2026"})
-
 def parse_docx_to_df(file_bytes):
-    """Automatically rips table data out of an uploaded Word Document (.docx)"""
     try:
         doc = docx.Document(file_bytes)
-        
-        # Method 1: Check if the user built a true Word Table
         if len(doc.tables) > 0:
             table = doc.tables[0]
             data = [[cell.text.strip() for cell in row.cells] for row in table.rows]
-            if data:
-                return pd.DataFrame(data[1:], columns=data[0])
+            if data: return pd.DataFrame(data[1:], columns=data[0])
                 
-        # Method 2: Check if it's text formatted with commas (like the file you uploaded)
         lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
         table_lines = []
         in_table = False
         for line in lines:
-            if line.startswith("DAY,DATE"):
-                in_table = True
+            if line.startswith("DAY,DATE"): in_table = True
             if in_table:
                 if "2200-0600" in line or line.startswith("M:"): break
                 table_lines.append(line)
         
-        if table_lines:
-            return pd.read_csv(io.StringIO("\n".join(table_lines)))
-        
+        if table_lines: return pd.read_csv(io.StringIO("\n".join(table_lines)))
         return None
     except Exception as e:
         st.error(f"Failed to read DOCX: {e}")
         return None
 
-# --- INITIAL DEFAULT SCHEDULE FOR FIRST BOOT ---
+# --- INITIAL DEFAULT SCHEDULE SETUP ---
 baseline_csv_string = """DAY,DATE,SP,RWB,TH,JA,MG,EJH,JDM,TRH
 WED,1,M,D,E,,,,,OFF
 THU,2,M ,D,E,,,,,-
@@ -140,8 +130,15 @@ TUE,28,M,D,E,,,,,
 WED,29,M,D,E,A,,,,
 THU,30,M,D,E,,,,,"""
 
-if not os.path.exists("current_baseline.csv"):
-    with open("current_baseline.csv", "w") as f: f.write(baseline_csv_string)
+# Dynamic Schedule Dictionary
+sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"months": ["APRIL 2026"]})
+if "APRIL 2026" not in sched_config["months"]: 
+    sched_config["months"].insert(0, "APRIL 2026")
+    save_json_db(SCHED_CONFIG_FILE, sched_config)
+
+if not os.path.exists("baseline_APRIL_2026.csv"):
+    with open("baseline_APRIL_2026.csv", "w") as f: f.write(baseline_csv_string)
+
 
 # --- SIDEBAR: SHIFT DUTIES & ALERTS ---
 with st.sidebar:
@@ -717,67 +714,62 @@ st.divider()
 
 # --- ADMIN TOOLS: SCHEDULE & LEAVE ---
 st.subheader("📅 Admin: Scheduling & Operations")
-sched_tab, leave_tab = st.tabs(["Monthly Schedule Tracker", "🏖️ 12-Month Leave Calendar"])
+sched_tab, leave_tab = st.tabs(["Monthly Schedule Library & Payroll", "🏖️ 12-Month Leave Calendar"])
 
 with sched_tab:
     col_t1, col_t2 = st.columns([1, 1])
     with col_t1:
-        view_toggle = st.radio("Select Schedule to View/Edit:", [f"Current Month ({sched_config['current']})", f"Next Month ({sched_config['next']})"], horizontal=True)
+        # Dynamic Library Selector
+        selected_month = st.selectbox("Select Schedule to View/Edit:", sched_config["months"])
     with col_t2:
-        is_current = "Current" in view_toggle
-        month_key = "current" if is_current else "next"
-        new_name = st.text_input("Rename this Schedule Month:", value=sched_config[month_key])
-        if st.button("Update Month Name"):
-            sched_config[month_key] = new_name
-            save_json_db(SCHED_CONFIG_FILE, sched_config)
-            st.success("Name updated!")
-            st.rerun()
+        st.info("Upload a completely new month to the library here. (CSV or DOCX)")
+        new_month_name = st.text_input("New Month Name (e.g., JUNE 2026):")
+        uploaded_file = st.file_uploader("Upload Schedule File", type=['csv', 'docx'])
+        if st.button("➕ Add New Month to Library"):
+            if uploaded_file and new_month_name:
+                df_new = None
+                if uploaded_file.name.endswith('.csv'): df_new = pd.read_csv(uploaded_file)
+                elif uploaded_file.name.endswith('.docx'): df_new = parse_docx_to_df(uploaded_file)
+                
+                if df_new is not None:
+                    safe_name = new_month_name.replace(" ", "_")
+                    df_new.to_csv(f"baseline_{safe_name}.csv", index=False)
+                    if new_month_name not in sched_config["months"]:
+                        sched_config["months"].append(new_month_name)
+                        save_json_db(SCHED_CONFIG_FILE, sched_config)
+                    st.success(f"{new_month_name} added to library!")
+                    st.rerun()
+                else: st.error("Could not extract a readable table.")
+            else: st.warning("Please provide a name and upload a file.")
 
-    if not is_current:
-        st.info("Upload the new baseline schedule here. (Accepts .csv or Word .docx files)")
-        uploaded_file = st.file_uploader("Upload Schedule (CSV or DOCX)", type=['csv', 'docx'])
-        if uploaded_file:
-            df_new = None
-            if uploaded_file.name.endswith('.csv'):
-                df_new = pd.read_csv(uploaded_file)
-            elif uploaded_file.name.endswith('.docx'):
-                df_new = parse_docx_to_df(uploaded_file)
-            
-            if df_new is not None:
-                df_new.to_csv("next_baseline.csv", index=False)
-                if os.path.exists("next_edited.csv"): os.remove("next_edited.csv")
-                st.success("Next month schedule uploaded successfully!")
-                st.rerun()
-            else:
-                st.error("Could not extract a readable table from that file.")
-            
-    base_file = "current_baseline.csv" if is_current else "next_baseline.csv"
-    edit_file = "current_edited.csv" if is_current else "next_edited.csv"
+    st.markdown("---")
+    safe_selected = selected_month.replace(" ", "_")
+    base_file = f"baseline_{safe_selected}.csv"
+    edit_file = f"edited_{safe_selected}.csv"
     
     if not os.path.exists(base_file):
-        st.warning(f"No schedule found for {view_toggle}. Please upload one above.")
+        st.warning(f"File for {selected_month} is missing.")
     else:
         df_base = pd.read_csv(base_file)
         if os.path.exists(edit_file): df_curr = pd.read_csv(edit_file)
         else: df_curr = df_base.copy()
             
-        st.markdown(f"**BIRMINGHAM AL CWO {sched_config[month_key]} SCHEDULE**")
+        st.markdown(f"**BIRMINGHAM AL CWO {selected_month} SCHEDULE**")
         st.caption("Legend: M: 2200-0600 | A: 0600-1400 | D: 0600-1400 | E: 1400-2200 | LV: Leave | H: Holiday | - : Off")
         
-        edited_df = st.data_editor(df_curr, num_rows="dynamic", use_container_width=True, key=f"editor_{view_toggle}")
+        edited_df = st.data_editor(df_curr, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_month}")
         
-        if st.button(f"💾 Save {sched_config[month_key]} Edits"):
+        if st.button(f"💾 Save {selected_month} Edits"):
             edited_df.to_csv(edit_file, index=False)
             st.success("Schedule Updated!")
             st.rerun()
             
         st.markdown("---")
-        st.markdown(f"### 🔴 {sched_config[month_key]} Redline Tracker")
+        st.markdown(f"### 🔴 {selected_month} Redline Tracker")
         st.caption("Shows changes made from the original published baseline schedule.")
         
         html = "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 14px;'>"
         html += "<tr style='background-color: #f0f2f6;'>" + "".join([f"<th style='border: 1px solid #ddd; padding: 8px;'>{c}</th>" for c in df_base.columns]) + "</tr>"
-        
         for i in range(len(df_base)):
             html += "<tr>"
             for col in df_base.columns:
@@ -790,14 +782,56 @@ with sched_tab:
                 if val_base == "nan": val_base = ""
                 if val_curr == "nan": val_curr = ""
 
-                if val_base != val_curr:
-                    cell_html = f"<del style='color:red;'>{val_base}</del><br><span style='color:red; font-weight:bold;'>{val_curr}</span>"
-                else:
-                    cell_html = val_curr
+                if val_base != val_curr: cell_html = f"<del style='color:red;'>{val_base}</del><br><span style='color:red; font-weight:bold;'>{val_curr}</span>"
+                else: cell_html = val_curr
                 html += f"<td style='border: 1px solid #ddd; padding: 8px;'>{cell_html}</td>"
             html += "</tr>"
         html += "</table>"
         st.markdown(html, unsafe_allow_html=True)
+        
+        # --- AUTOMATED PAYROLL GENERATOR ---
+        st.markdown("---")
+        st.markdown("### ⏱️ Automated Payroll & Timesheet Generator")
+        st.caption("Calculates total hours worked, Sunday Premium, and Night Shift Differential (assuming standard 1800-0600 NSD rules) based on the saved schedule above.")
+        
+        if st.button(f"Generate Timesheet for {selected_month}"):
+            payroll_data = []
+            # Start from the 3rd column to skip 'DAY' and 'DATE'
+            observers = df_curr.columns[2:] 
+            
+            for person in observers:
+                total_hrs, nsd_hrs, sun_hrs = 0, 0, 0
+                for index, row in df_curr.iterrows():
+                    shift = str(row[person]).strip().upper()
+                    day = str(row['DAY']).strip().upper()
+                    
+                    if shift in ['M', 'A', 'D', 'E']:
+                        total_hrs += 8
+                        if day == 'SUN': 
+                            sun_hrs += 8
+                        # Assuming Night Shift Differential is 1800-0600
+                        if shift == 'M': # 2200-0600 = 8 hrs NSD
+                            nsd_hrs += 8
+                        elif shift == 'E': # 1400-2200 = 4 hrs NSD (1800-2200)
+                            nsd_hrs += 4
+                            
+                payroll_data.append({
+                    "Observer": person, 
+                    "Total Hours": total_hrs, 
+                    "Sunday Premium": sun_hrs, 
+                    "Night Differential": nsd_hrs
+                })
+                
+            df_payroll = pd.DataFrame(payroll_data)
+            st.dataframe(df_payroll, use_container_width=True)
+            
+            csv_payroll = df_payroll.to_csv(index=False)
+            st.download_button(
+                label=f"⬇️ Download {selected_month} Payroll CSV",
+                data=csv_payroll,
+                file_name=f"Payroll_{safe_selected}.csv",
+                mime="text/csv"
+            )
 
 with leave_tab:
     st.markdown("### 🏖️ Employee Time-Off Requests")
@@ -823,6 +857,7 @@ with leave_tab:
                 st.rerun()
             else: st.warning("Please enter a name.")
 
+    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR ---
     st.markdown("---")
     st.markdown("#### 12-Month Visual Leave Calendar")
     
