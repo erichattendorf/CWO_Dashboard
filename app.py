@@ -10,6 +10,7 @@ import pandas as pd
 import io
 import calendar
 import docx
+import holidays  # The new US Holiday engine!
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -719,7 +720,6 @@ sched_tab, leave_tab = st.tabs(["Monthly Schedule Library & Payroll", "🏖️ 1
 with sched_tab:
     col_t1, col_t2 = st.columns([1, 1])
     with col_t1:
-        # Dynamic Library Selector
         selected_month = st.selectbox("Select Schedule to View/Edit:", sched_config["months"])
     with col_t2:
         st.info("Upload a completely new month to the library here. (CSV or DOCX)")
@@ -789,31 +789,36 @@ with sched_tab:
         html += "</table>"
         st.markdown(html, unsafe_allow_html=True)
         
-        # --- AUTOMATED PAYROLL GENERATOR ---
+        # --- AUTOMATED PAYROLL GENERATOR WITH PAY PERIODS ---
         st.markdown("---")
         st.markdown("### ⏱️ Automated Payroll & Timesheet Generator")
-        st.caption("Calculates total hours worked, Sunday Premium, and Night Shift Differential (assuming standard 1800-0600 NSD rules) based on the saved schedule above.")
+        
+        pay_period = st.radio("Select Pay Period:", ["Full Month", "1st - 15th", "16th - End of Month"], horizontal=True)
         
         if st.button(f"Generate Timesheet for {selected_month}"):
             payroll_data = []
-            # Start from the 3rd column to skip 'DAY' and 'DATE'
             observers = df_curr.columns[2:] 
             
             for person in observers:
                 total_hrs, nsd_hrs, sun_hrs = 0, 0, 0
                 for index, row in df_curr.iterrows():
+                    try:
+                        day_num = int(row['DATE'])
+                    except:
+                        continue 
+
+                    # Pay Period Filtering Logic
+                    if pay_period == "1st - 15th" and day_num > 15: continue
+                    if pay_period == "16th - End of Month" and day_num <= 15: continue
+
                     shift = str(row[person]).strip().upper()
                     day = str(row['DAY']).strip().upper()
                     
                     if shift in ['M', 'A', 'D', 'E']:
                         total_hrs += 8
-                        if day == 'SUN': 
-                            sun_hrs += 8
-                        # Assuming Night Shift Differential is 1800-0600
-                        if shift == 'M': # 2200-0600 = 8 hrs NSD
-                            nsd_hrs += 8
-                        elif shift == 'E': # 1400-2200 = 4 hrs NSD (1800-2200)
-                            nsd_hrs += 4
+                        if day == 'SUN': sun_hrs += 8
+                        if shift == 'M': nsd_hrs += 8
+                        elif shift == 'E': nsd_hrs += 4
                             
                 payroll_data.append({
                     "Observer": person, 
@@ -827,9 +832,9 @@ with sched_tab:
             
             csv_payroll = df_payroll.to_csv(index=False)
             st.download_button(
-                label=f"⬇️ Download {selected_month} Payroll CSV",
+                label=f"⬇️ Download {pay_period} Payroll CSV",
                 data=csv_payroll,
-                file_name=f"Payroll_{safe_selected}.csv",
+                file_name=f"Payroll_{safe_selected}_{pay_period.replace(' ', '')}.csv",
                 mime="text/csv"
             )
 
@@ -857,7 +862,7 @@ with leave_tab:
                 st.rerun()
             else: st.warning("Please enter a name.")
 
-    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR ---
+    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR (WITH HOLIDAYS) ---
     st.markdown("---")
     st.markdown("#### 12-Month Visual Leave Calendar")
     
@@ -873,18 +878,28 @@ with leave_tab:
                 leave_dict[d_str].append(req['name'])
         except Exception as e: pass
 
+    cur_year = datetime.now(bhm_tz).year
+    cur_month = datetime.now(bhm_tz).month
+    us_holidays = holidays.US(years=[cur_year, cur_year+1])
+
     class LeaveCalendar(calendar.HTMLCalendar):
-        def __init__(self, l_dict, yr, mo):
+        def __init__(self, l_dict, h_dict, yr, mo):
             super().__init__()
             self.l_dict = l_dict
+            self.h_dict = h_dict
             self.yr = yr
             self.mo = mo
 
         def formatday(self, day, weekday):
             if day == 0: return '<td style="background-color:#fafafa; border:1px solid #eee;">&nbsp;</td>'
             date_str = f"{self.yr}-{self.mo:02d}-{day:02d}"
-            cell_html = f"<strong style='font-size: 14px;'>{day}</strong><br>"
+            cell_html = f"<strong style='font-size: 14px;'>{day}</strong>"
             bg_color = "white"
+            
+            # Check for Federal Holidays and add a blue label!
+            holiday_name = self.h_dict.get(date_str)
+            if holiday_name:
+                cell_html += f"<br><span style='font-size:9px; color:#0055cc; font-weight:bold; line-height:1;'>{holiday_name}</span>"
             
             if date_str in self.l_dict:
                 bg_color = "#ffcccc"
@@ -901,9 +916,6 @@ with leave_tab:
             s = ''.join(f'<th style="background-color:#f0f2f6; color:#333; padding:5px; font-size:12px; border:1px solid #ddd;">{wk}</th>' for wk in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
             return f'<tr>{s}</tr>'
 
-    cur_year = datetime.now(bhm_tz).year
-    cur_month = datetime.now(bhm_tz).month
-
     for row in range(4):
         cols = st.columns(3)
         for col_idx in range(3):
@@ -914,7 +926,7 @@ with leave_tab:
                 calc_month -= 12
                 calc_year += 1
 
-            cal = LeaveCalendar(leave_dict, calc_year, calc_month)
+            cal = LeaveCalendar(leave_dict, us_holidays, calc_year, calc_month)
             cal_html = cal.formatmonth(calc_year, calc_month)
             
             cal_html = cal_html.replace('<table border="0" cellpadding="0" cellspacing="0" class="month">', '<table style="width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif; margin-bottom: 20px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1);">')
