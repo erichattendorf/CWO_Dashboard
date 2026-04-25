@@ -9,6 +9,7 @@ import json
 import pandas as pd
 import io
 import calendar
+import docx  # The new Word Document engine!
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -74,6 +75,37 @@ def save_json_db(filepath, data):
     with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
 sched_config = load_json_db(SCHED_CONFIG_FILE, default_val={"current": "APRIL 2026", "next": "MAY 2026"})
+
+def parse_docx_to_df(file_bytes):
+    """Automatically rips table data out of an uploaded Word Document (.docx)"""
+    try:
+        doc = docx.Document(file_bytes)
+        
+        # Method 1: Check if the user built a true Word Table
+        if len(doc.tables) > 0:
+            table = doc.tables[0]
+            data = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+            if data:
+                return pd.DataFrame(data[1:], columns=data[0])
+                
+        # Method 2: Check if it's text formatted with commas (like the file you uploaded)
+        lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+        table_lines = []
+        in_table = False
+        for line in lines:
+            if line.startswith("DAY,DATE"):
+                in_table = True
+            if in_table:
+                if "2200-0600" in line or line.startswith("M:"): break
+                table_lines.append(line)
+        
+        if table_lines:
+            return pd.read_csv(io.StringIO("\n".join(table_lines)))
+        
+        return None
+    except Exception as e:
+        st.error(f"Failed to read DOCX: {e}")
+        return None
 
 # --- INITIAL DEFAULT SCHEDULE FOR FIRST BOOT ---
 baseline_csv_string = """DAY,DATE,SP,RWB,TH,JA,MG,EJH,JDM,TRH
@@ -702,14 +734,22 @@ with sched_tab:
             st.rerun()
 
     if not is_current:
-        st.info("Upload the baseline CSV schedule for next month here. (Save your Excel/Word table as a .csv file first)")
-        uploaded_csv = st.file_uploader("Upload Schedule (CSV)", type=['csv'])
-        if uploaded_csv:
-            df_new = pd.read_csv(uploaded_csv)
-            df_new.to_csv("next_baseline.csv", index=False)
-            if os.path.exists("next_edited.csv"): os.remove("next_edited.csv")
-            st.success("Next month schedule uploaded successfully!")
-            st.rerun()
+        st.info("Upload the new baseline schedule here. (Accepts .csv or Word .docx files)")
+        uploaded_file = st.file_uploader("Upload Schedule (CSV or DOCX)", type=['csv', 'docx'])
+        if uploaded_file:
+            df_new = None
+            if uploaded_file.name.endswith('.csv'):
+                df_new = pd.read_csv(uploaded_file)
+            elif uploaded_file.name.endswith('.docx'):
+                df_new = parse_docx_to_df(uploaded_file)
+            
+            if df_new is not None:
+                df_new.to_csv("next_baseline.csv", index=False)
+                if os.path.exists("next_edited.csv"): os.remove("next_edited.csv")
+                st.success("Next month schedule uploaded successfully!")
+                st.rerun()
+            else:
+                st.error("Could not extract a readable table from that file.")
             
     base_file = "current_baseline.csv" if is_current else "next_baseline.csv"
     edit_file = "current_edited.csv" if is_current else "next_edited.csv"
