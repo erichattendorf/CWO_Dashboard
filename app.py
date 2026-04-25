@@ -10,7 +10,7 @@ import pandas as pd
 import io
 import calendar
 import docx
-import holidays  # The new US Holiday engine!
+import holidays 
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="BHM CWO Dashboard", layout="wide", initial_sidebar_state="expanded")
@@ -769,7 +769,7 @@ with sched_tab:
         st.caption("Shows changes made from the original published baseline schedule.")
         
         html = "<table style='width:100%; border-collapse: collapse; text-align: center; font-size: 14px;'>"
-        html += "<tr style='background-color: #f0f2f6;'>" + "".join([f"<th style='border: 1px solid #ddd; padding: 8px;'>{c}</th>" for c in df_base.columns]) + "</tr>"
+        html += "<tr style='background-color: #f0f2f6;'>" + "".join([f"<th style='border: 1px solid #ddd; padding: 8px; color: #333;'>{c}</th>" for c in df_base.columns]) + "</tr>"
         for i in range(len(df_base)):
             html += "<tr>"
             for col in df_base.columns:
@@ -783,7 +783,7 @@ with sched_tab:
                 if val_curr == "nan": val_curr = ""
 
                 if val_base != val_curr: cell_html = f"<del style='color:red;'>{val_base}</del><br><span style='color:red; font-weight:bold;'>{val_curr}</span>"
-                else: cell_html = val_curr
+                else: cell_html = f"<span style='color: #333;'>{val_curr}</span>"
                 html += f"<td style='border: 1px solid #ddd; padding: 8px;'>{cell_html}</td>"
             html += "</tr>"
         html += "</table>"
@@ -802,12 +802,9 @@ with sched_tab:
             for person in observers:
                 total_hrs, nsd_hrs, sun_hrs = 0, 0, 0
                 for index, row in df_curr.iterrows():
-                    try:
-                        day_num = int(row['DATE'])
-                    except:
-                        continue 
+                    try: day_num = int(row['DATE'])
+                    except: continue 
 
-                    # Pay Period Filtering Logic
                     if pay_period == "1st - 15th" and day_num > 15: continue
                     if pay_period == "16th - End of Month" and day_num <= 15: continue
 
@@ -862,7 +859,7 @@ with leave_tab:
                 st.rerun()
             else: st.warning("Please enter a name.")
 
-    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR (WITH HOLIDAYS) ---
+    # --- CUSTOM 12-MONTH VISUAL CALENDAR GENERATOR (WITH HOLIDAYS & TEXT COLOR FIX) ---
     st.markdown("---")
     st.markdown("#### 12-Month Visual Leave Calendar")
     
@@ -893,10 +890,11 @@ with leave_tab:
         def formatday(self, day, weekday):
             if day == 0: return '<td style="background-color:#fafafa; border:1px solid #eee;">&nbsp;</td>'
             date_str = f"{self.yr}-{self.mo:02d}-{day:02d}"
-            cell_html = f"<strong style='font-size: 14px;'>{day}</strong>"
+            
+            # THE FIX: Added `color: #333;` so the numbers are visible in Dark Mode!
+            cell_html = f"<strong style='font-size: 14px; color: #333;'>{day}</strong>"
             bg_color = "white"
             
-            # Check for Federal Holidays and add a blue label!
             holiday_name = self.h_dict.get(date_str)
             if holiday_name:
                 cell_html += f"<br><span style='font-size:9px; color:#0055cc; font-weight:bold; line-height:1;'>{holiday_name}</span>"
