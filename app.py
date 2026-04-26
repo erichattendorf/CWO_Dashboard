@@ -664,14 +664,29 @@ with tab_ts:
     with col_ts1:
         has_ltg = st.checkbox("Lightning Observed")
         if has_ltg:
-            ltg_freq, ltg_types, ltg_loc = st.selectbox("Frequency:", ["OCNL", "FRQ", "CONS"]), st.multiselect("Type:", ["IC", "CG", "CC", "CA"], default=["CG"]), st.selectbox("LTG Location:", ["ALQDS", "OHD", "VC", "DSNT", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            ltg_freq = st.selectbox("Frequency:", ["OCNL", "FRQ", "CONS"])
+            ltg_types = st.multiselect("Type:", ["IC", "CG", "CC", "CA"], default=["CG"])
+            ltg_loc = st.selectbox("LTG Location:", ["ALQDS", "OHD", "VC", "DSNT", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
             rmks['H'] = f"{ltg_freq} LTG{''.join(ltg_types)} {ltg_loc}"
+            
     with col_ts2:
         has_ts = st.checkbox("Thunderstorm Active")
         if has_ts:
-            st.warning("🚨 **TS REMINDER:** Put `TS` in Pres WX | Add `CB` to Sky | Turn ALDARS to `MAN`")
-            ts_loc, ts_mov = st.selectbox("TS Location:", ["OHD", "VC", "DSNT", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"]), st.selectbox("TS Moving:", ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
-            rmks['K'] = f"TS {ts_loc}" + (f" MOV {ts_mov}" if ts_mov != "Unknown" else "")
+            st.warning("🚨 **TS REMINDER:** Put `TS` or `VCTS` in Pres WX | Add `CB` to Sky | Turn ALDARS to `MAN`")
+            
+            ts_dist = st.selectbox("Distance Category:", ["Overhead (OHD, <5SM)", "Vicinity (VC, 5-10SM)", "Distant (DSNT, 10-30SM)"])
+            ts_dir = st.selectbox("Direction:", ["", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            ts_mov = st.selectbox("TS Moving:", ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            
+            # Formats precisely to JO 7900.5E criteria
+            if ts_dist.startswith("Overhead"):
+                ts_str = "TS OHD"
+            elif ts_dist.startswith("Vicinity"):
+                ts_str = f"TS {ts_dir}".strip() if ts_dir else "TS"
+            elif ts_dist.startswith("Distant"):
+                ts_str = f"TS DSNT {ts_dir}".strip() if ts_dir else "TS DSNT"
+                
+            rmks['K'] = ts_str + (f" MOV {ts_mov}" if ts_mov != "Unknown" else "")
 
 with tab_precip:
     col_p1, col_p2, col_p3, col_p4 = st.columns(4)
@@ -891,7 +906,6 @@ with leave_tab:
             if day == 0: return '<td style="background-color:#fafafa; border:1px solid #eee;">&nbsp;</td>'
             date_str = f"{self.yr}-{self.mo:02d}-{day:02d}"
             
-            # THE FIX: Added `color: #333;` so the numbers are visible in Dark Mode!
             cell_html = f"<strong style='font-size: 14px; color: #333;'>{day}</strong>"
             bg_color = "white"
             
