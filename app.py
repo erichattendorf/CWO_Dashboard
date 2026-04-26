@@ -571,11 +571,11 @@ with calc_tab:
 
     with calc_col3:
         st.markdown("**⚡ Flash-to-Bang (Lightning)**")
-        st.caption("Rules: **0-5m** = OHD | **5-10m** = VC | **10-30m** = DSNT")
+        st.caption("Rules: **<5m** = At Station | **5-10m** = VC | **10-30m** = DSNT")
         sec_delay = st.number_input("Seconds between Flash and Thunder:", min_value=0, value=0, step=1)
         if sec_delay > 0:
             miles = round(sec_delay / 5.0, 1)
-            if miles <= 5: st.error(f"**{miles} Miles (TS OHD)**")
+            if miles <= 5: st.error(f"**{miles} Miles (At Station)**")
             elif miles <= 10: st.warning(f"**{miles} Miles (TS VC)**")
             else: st.success(f"**{miles} Miles (TS DSNT)**")
         else:
@@ -672,19 +672,26 @@ with tab_ts:
     with col_ts2:
         has_ts = st.checkbox("Thunderstorm Active")
         if has_ts:
-            st.warning("🚨 **TS REMINDER:** Put `TS` or `VCTS` in Pres WX | Add `CB` to Sky | Turn ALDARS to `MAN`")
+            ts_dist = st.selectbox("Distance Category:", ["At Station (<5SM)", "Vicinity (5-10SM)", "Distant (10-30SM)"])
             
-            ts_dist = st.selectbox("Distance Category:", ["Overhead (OHD, <5SM)", "Vicinity (VC, 5-10SM)", "Distant (DSNT, 10-30SM)"])
-            ts_dir = st.selectbox("Direction:", ["", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+            # Dynamic Warnings based on distance category
+            if ts_dist.startswith("At Station"):
+                st.error("🚨 **TS REMINDER:** Put `TS` in Pres WX | Add `CB` to Sky | Turn ALDARS to `MAN`")
+            elif ts_dist.startswith("Vicinity"):
+                st.warning("🚨 **TS REMINDER:** Put `VCTS` in Pres WX | Add `CB` to Sky | Turn ALDARS to `MAN`")
+            else:
+                st.info("🚨 **TS REMINDER:** DO NOT put TS/VCTS in Pres Wx. Just add `CB` to Sky.")
+                
+            ts_dir = st.selectbox("Direction:", ["OHD", "ALQDS", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
             ts_mov = st.selectbox("TS Moving:", ["Unknown", "N", "NE", "E", "SE", "S", "SW", "W", "NW"])
             
             # Formats precisely to JO 7900.5E criteria
-            if ts_dist.startswith("Overhead"):
-                ts_str = "TS OHD"
-            elif ts_dist.startswith("Vicinity"):
+            if ts_dist.startswith("At Station") or ts_dist.startswith("Vicinity"):
                 ts_str = f"TS {ts_dir}".strip() if ts_dir else "TS"
             elif ts_dist.startswith("Distant"):
-                ts_str = f"TS DSNT {ts_dir}".strip() if ts_dir else "TS DSNT"
+                # Distant storms drop the OHD and ALQDS options logically, so we strip them if accidentally selected
+                clean_dir = ts_dir if ts_dir not in ["OHD", "ALQDS"] else ""
+                ts_str = f"TS DSNT {clean_dir}".strip() if clean_dir else "TS DSNT"
                 
             rmks['K'] = ts_str + (f" MOV {ts_mov}" if ts_mov != "Unknown" else "")
 
